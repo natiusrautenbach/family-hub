@@ -1,14 +1,15 @@
 /* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Family Hub · app (beta, milestone 1)
-   Screens: first-time setup, Today, child pages, Settings (children, backup,
-   storage, install, access). Calendar, Tasks, Study and Money arrive in
-   milestones 2 to 6 and show what is coming until then. */
+/* Family Hub · app (beta, milestone 2)
+   Screens: first-time setup, Today, Calendar (activities, reminders, school
+   terms), child pages, Settings. Tasks, Study and Money arrive in milestones
+   3 to 6 and show what is coming until then. */
 (function () {
   'use strict';
   const FH = window.FH;
   const data = FH.data;
-  const VERSION = '0.1.0';
-  const MILESTONE = 1;
+  const C = FH.cal;
+  const VERSION = '0.2.0';
+  const MILESTONE = 2;
 
   /* ---------- Small helpers ---------- */
   const $ = s => document.querySelector(s);
@@ -40,7 +41,6 @@
     [7, 'Today and hand-over', 'Daily digest, child pages, install guide'],
   ];
   const COMING = {
-    calendar: { m: 2, title: 'Calendar', text: 'Week and month views with a toggle for each child, a filter by item type, weekly activities that pause in school holidays, reminders, and Gauteng school terms you can edit.' },
     tasks: { m: 3, title: 'Tasks', text: 'Homework and projects with a due date, priority, notes and steps. Steps can have their own due dates and show on the calendar.' },
     study: { m: 4, title: 'Study planner', text: 'Photograph an exam timetable, check what was read, and get a revision plan you can adjust and tick off.' },
     money: { m: 5, title: 'Money', text: 'Bank balances with history, savings goals shared by percentage, and money owed each way. Chores and reward goals follow in milestone 6.' },
@@ -56,7 +56,23 @@
     storage: { persisted: null, usage: null, quota: null },
     installEvt: null,
     backupText: '',
+    /* milestone 2 */
+    activities: [], reminders: [], terms: [], daysoff: [], sc: null,
+    hidden: new Set(),                      // children switched off on the calendar
+    kinds: new Set(['act', 'rem']),         // item types shown on the calendar
+    cal: { mode: 'week', cursor: C.today(), sel: C.today() },
+    pastTerms: false,
   };
+  const KINDS = [['act', 'Activities'], ['rem', 'Reminders']];
+  try {
+    const saved = JSON.parse(localStorage.getItem('fh-cal') || 'null');
+    if (saved) { if (saved.mode) S.cal.mode = saved.mode; if (Array.isArray(saved.kinds)) S.kinds = new Set(saved.kinds.filter(k => KINDS.some(x => x[0] === k))); if (Array.isArray(saved.hidden)) S.hidden = new Set(saved.hidden); }
+  } catch (e) { /* storage not available: use defaults */ }
+  function saveCalPrefs() { try { localStorage.setItem('fh-cal', JSON.stringify({ mode: S.cal.mode, kinds: [...S.kinds], hidden: [...S.hidden] })); } catch (e) { /* ignore */ } }
+  const visibleSet = () => new Set(S.children.filter(c => !S.hidden.has(c.id)).map(c => c.id));
+  const kidOf = id => S.children.find(c => c.id === id);
+  const colOf = id => kidOf(id)?.colour || 'c1';
+  const nameOf = id => kidOf(id)?.name || '';
 
   /* ---------- Icons ---------- */
   const IC = {
@@ -69,6 +85,8 @@
     plus: '<path d="M12 5v14M5 12h14"/>',
     check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
     lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    left: '<path d="M15 5l-7 7 7 7"/>',
+    right: '<path d="M9 5l7 7-7 7"/>',
   };
   const ic = k => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${IC[k]}</svg>`;
   const avatar = (p, lg) => `<span class="avatar${lg ? ' lg' : ''}" style="--c:var(--${esc(p.colour)})">${esc((p.name || '?').trim()[0] || '?')}</span>`;
@@ -79,7 +97,35 @@
     S.children = (await data.list('people', p => p.type === 'child')).sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name));
     S.family = await data.getSetting('familyName', '');
     S.setupDone = await data.getSetting('setupDone', false);
+    const kids = new Set(S.children.map(c => c.id));
+    S.activities = (await data.list('activities')).filter(a => kids.has(a.owner));
+    S.reminders = (await data.list('reminders')).filter(r => kids.has(r.owner));
+    S.terms = await data.list('terms');
+    S.daysoff = await data.list('daysoff');
+    S.sc = C.schoolCalendar(S.terms, S.daysoff);
   }
+
+  /* Adds official terms and holidays that this device has never had.
+     Anything you edited or removed is left exactly as you left it. */
+  async function importOfficial() {
+    let added = 0;
+    for (const t of C.OFFICIAL.terms) {
+      if (await data.known('terms', t.id)) continue;
+      await data.save('terms', { id: t.id, name: t.name, start: t.start, end: t.end, official: { name: t.name, start: t.start, end: t.end } });
+      added++;
+    }
+    for (const d of C.OFFICIAL.daysoff) {
+      if (await data.known('daysoff', d.id)) continue;
+      await data.save('daysoff', { id: d.id, name: d.name, date: d.date, end: '', official: { name: d.name, date: d.date, end: '' } });
+      added++;
+    }
+    return added;
+  }
+  async function resetOfficial() {
+    for (const t of C.OFFICIAL.terms) await data.save('terms', { id: t.id, name: t.name, start: t.start, end: t.end, official: { name: t.name, start: t.start, end: t.end } });
+    for (const d of C.OFFICIAL.daysoff) await data.save('daysoff', { id: d.id, name: d.name, date: d.date, end: '', official: { name: d.name, date: d.date, end: '' } });
+  }
+  const isEdited = r => !!r.official && Object.keys(r.official).some(k => (r[k] || '') !== (r.official[k] || ''));
   async function refreshStorage() {
     try {
       if (navigator.storage?.persisted) S.storage.persisted = await navigator.storage.persisted();
@@ -140,16 +186,59 @@
       <ol class="ms">${MILESTONES.map(([n, t, d]) => `<li class="${n < MILESTONE ? 'done' : n === MILESTONE ? 'now' : ''}"><span class="msn">${n}</span><span class="min0"><b>${t}</b><span class="muted"> · ${d}</span></span><span class="pill ${n === MILESTONE ? 'on' : ''}">${n < MILESTONE ? 'Done' : n === MILESTONE ? 'Ready to test' : 'Coming'}</span></li>`).join('')}</ol></section>`;
   }
 
+  /* ---------- Events (activities and reminders) ---------- */
+  const src = () => ({ activities: S.activities, reminders: S.reminders, sc: S.sc });
+  const KLABEL = { act: 'Activity', rem: 'Reminder' };
+  function evRow(e, showDate) {
+    return `<button class="ev evb" style="--c:var(--${colOf(e.child)})" data-act="ev" data-v="${e.kind}|${e.id}|${e.date}">
+      <span class="t">${showDate ? `${C.DOW[C.dow(e.date)]}<small>${C.toD(e.date).getDate()} ${C.MON[C.toD(e.date).getMonth()]}</small>` : `${e.time || 'All day'}${e.end ? `<small>${e.end}</small>` : ''}`}</span>
+      <span class="bar"></span>
+      <span class="min0"><span class="ti ${e.skipped ? 'struck' : ''}">${esc(e.title)}</span><span class="sub">${esc(nameOf(e.child))} · ${e.skipped ? 'Skipped this time' : `${showDate && e.time ? e.time + ' · ' : ''}${esc(e.sub)}`}</span></span>
+      <span class="tag ${e.kind}">${KLABEL[e.kind]}</span></button>`;
+  }
+  function schoolLine(s) {
+    const sc = S.sc; if (!sc) return '';
+    const t = sc.termOf(s);
+    if (t) {
+      const wk = Math.floor(C.diffDays(C.startOfWeek(t.start), s) / 7) + 1;
+      const wks = Math.floor(C.diffDays(C.startOfWeek(t.start), t.end) / 7) + 1;
+      const off = sc.offLabel(s);
+      return `${esc(t.name.replace(/ \d{4}$/, ''))} · week ${wk} of ${wks}${off ? ' · ' + esc(off) : ''}`;
+    }
+    if (sc.covered(s)) { const n = sc.nextTerm(s); return `School holidays${n ? ` · school opens ${C.fmtDay(n.start)}` : ''}`; }
+    return '';
+  }
+
   function vToday() {
-    const d = new Date();
+    const s = C.today();
+    const all = new Set(S.children.map(c => c.id));
+    const ev = C.eventsOn(s, src(), { visible: all });
+    const live = ev.filter(e => !e.skipped);
+    const soon = [];
+    for (let i = 1; i <= 7; i++) soon.push(...C.eventsOn(C.addDays(s, i), src(), { visible: all, kinds: new Set(['rem']) }));
+    const t = S.sc?.termOf(s);
+    const nt = !t && S.sc?.covered(s) ? S.sc.nextTerm(s) : null;
+    const digest = !S.children.length ? 'Add your children to get started.'
+      : `<b>${live.length ? `${live.length} ${live.length === 1 ? 'thing' : 'things'} on today` : 'Nothing planned today'}</b>${live.length && S.children.length > 1 ? ` across ${new Set(live.map(e => e.child)).size} ${new Set(live.map(e => e.child)).size === 1 ? 'child' : 'children'}` : ''}. `
+        + (soon.length ? `${soon.length} reminder${soon.length === 1 ? '' : 's'} in the next week. ` : '')
+        + (t ? `School closes ${C.fmtDay(t.end)} (${C.rel(C.diffDays(s, t.end))}).` : nt ? `School opens ${C.fmtDay(nt.start)} (${C.rel(C.diffDays(s, nt.start))}).` : '');
     const backupAge = S.lastBackup ? Math.floor((Date.now() - new Date(S.lastBackup)) / 864e5) : null;
     return `<div class="view">
-      <section class="hero"><div class="eyebrow">${S.family ? esc(S.family) + ' · ' : ''}Today</div><h1>${fmtLong(d)}</h1>
-        <p class="digest">${S.children.length ? `<b>${S.children.length} ${S.children.length === 1 ? 'child' : 'children'}</b> set up on this device. Schedules, tasks and money arrive in the next milestones.` : 'Add your children to get started.'}</p></section>
+      <section class="hero"><div class="eyebrow">${S.family ? esc(S.family) + ' · ' : ''}${schoolLine(s) || 'Today'}</div><h1>${C.fmtLong(s)}</h1>
+        <p class="digest">${digest}</p></section>
       ${childCards()}
       <div class="cols">
-        ${roadmap()}
         <div class="stack">
+          <section class="card"><div class="card-h"><h3>Today</h3><button class="btn sm" data-act="nav" data-v="calendar">Week view</button></div>
+            ${ev.length ? ev.map(e => evRow(e)).join('') : `<p class="empty">Nothing planned today.</p>`}
+            ${!S.activities.length ? `<div class="nudge"><p class="small">Add weekly activities like hockey practice or music lessons. They repeat every week and pause in school holidays.</p><button class="btn sm pri" data-act="add" data-v="activity">Add an activity</button></div>` : ''}
+          </section>
+          <section class="card"><div class="card-h"><h3>Reminders this week</h3><button class="btn sm" data-act="add" data-v="reminder">Add reminder</button></div>
+            ${soon.length ? soon.map(e => evRow(e, true)).join('') : '<p class="empty">No reminders in the next seven days.</p>'}
+          </section>
+        </div>
+        <div class="stack">
+          ${roadmap()}
           ${backupCard(backupAge)}
           ${S.storage.persisted === false ? `<section class="card warnc"><div class="card-h"><h3>Protect your data</h3></div><p class="small">This browser may clear Family Hub's data when the device runs low on space. Ask it to keep the data, and install the app to your home screen.</p><div class="row" style="margin-top:10px"><button class="btn sm pri" data-act="persist">Keep data on this device</button><button class="btn sm" data-act="nav" data-v="settings">Settings</button></div></section>` : ''}
         </div>
@@ -175,11 +264,129 @@
       <div class="phead">${avatar(c, true)}<div class="min0" style="flex:1"><h1>${esc(c.name)}</h1><div class="muted">${esc(c.grade || '')} · ${colName(c.colour)}</div></div>
         <button class="btn" data-act="child-edit" data-v="${c.id}">Edit</button></div>
       <div class="cols">
-        <section class="card"><div class="card-h"><h3>Weekly activities</h3><span class="pill">Milestone 2</span></div><p class="empty">${esc(c.name)}'s activities will show here.</p></section>
+        <section class="card"><div class="card-h"><h3>Weekly activities</h3><button class="btn sm" data-act="add" data-v="activity" data-child="${c.id}">Add</button></div>
+          ${weeklyList(c.id)}</section>
+        <section class="card"><div class="card-h"><h3>Upcoming reminders</h3><button class="btn sm" data-act="add" data-v="reminder" data-child="${c.id}">Add</button></div>
+          ${upcomingReminders(c.id)}</section>
         <section class="card"><div class="card-h"><h3>Homework and projects</h3><span class="pill">Milestone 3</span></div><p class="empty">Open tasks will show here.</p></section>
         <section class="card"><div class="card-h"><h3>Exams</h3><span class="pill">Milestone 4</span></div><p class="empty">Upcoming exams will show here.</p></section>
         <section class="card"><div class="card-h"><h3>Money</h3><span class="pill">Milestone 5</span></div><p class="empty">Savings and money owed will show here.</p></section>
       </div></div>`;
+  }
+
+  const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
+  const daysText = wd => {
+    const sorted = WEEK_ORDER.filter(d => wd.includes(d));
+    if (sorted.length === 7) return 'Every day';
+    if (sorted.length === 5 && !wd.includes(0) && !wd.includes(6)) return 'Weekdays';
+    return sorted.map(d => C.DOW[d]).join(', ');
+  };
+  const actSummary = a => `${daysText(a.weekdays)}${a.start ? `, ${a.start}${a.end ? '–' + a.end : ''}` : ''}${a.place ? ` · ${esc(a.place)}` : ''}${a.runsInHolidays ? ' · also in holidays' : ''}${a.until ? ` · until ${C.fmtDate(a.until)}` : ''}`;
+  function weeklyList(childId) {
+    const acts = S.activities.filter(a => a.owner === childId && (!a.until || a.until >= C.today()));
+    if (!acts.length) return '<p class="empty">No weekly activities yet.</p>';
+    const rows = [];
+    for (const d of WEEK_ORDER) for (const a of acts.filter(x => x.weekdays.includes(d)).sort((x, y) => (x.start || '').localeCompare(y.start || ''))) rows.push({ d, a });
+    return rows.map(({ d, a }) => `<button class="ev evb" style="--c:var(--${colOf(childId)})" data-act="act-edit" data-v="${a.id}">
+      <span class="t">${C.DOW[d]}</span><span class="bar"></span>
+      <span class="min0"><span class="ti">${esc(a.title)}</span><span class="sub">${a.start ? `${a.start}${a.end ? '–' + a.end : ''}` : 'Any time'}${a.place ? ` · ${esc(a.place)}` : ''}${a.runsInHolidays ? ' · also in holidays' : ''}</span></span>
+      <span class="tag act">Edit</span></button>`).join('');
+  }
+  function upcomingReminders(childId) {
+    const s = C.today();
+    const list = S.reminders.filter(r => r.owner === childId).map(r => ({ r, d: C.nextReminder(r, s) })).filter(x => x.d && C.diffDays(s, x.d) <= 60).sort((x, y) => x.d.localeCompare(y.d));
+    if (!list.length) return '<p class="empty">No reminders in the next two months.</p>';
+    return list.map(({ r, d }) => evRow({ kind: 'rem', id: r.id, child: childId, date: d, time: r.time || '', title: r.title, sub: r.repeat && r.repeat !== 'none' ? C.REPEATS.find(x => x[0] === r.repeat)[1] : 'Reminder' }, true)).join('');
+  }
+
+  /* ---------- Calendar ---------- */
+  function toggles() {
+    const allOn = S.children.every(c => !S.hidden.has(c.id));
+    return `<div class="toggles" role="group" aria-label="Show children">
+      <button class="tg" style="--c:var(--all)" data-act="vis" data-v="all" aria-pressed="${allOn}"><span class="dot"></span>All</button>
+      ${S.children.map(c => `<button class="tg" style="--c:var(--${c.colour})" data-act="vis" data-v="${c.id}" aria-pressed="${!S.hidden.has(c.id)}"><span class="dot"></span>${esc(c.name)}</button>`).join('')}
+    </div>`;
+  }
+  function kindToggles() {
+    const allOn = KINDS.every(([k]) => S.kinds.has(k));
+    return `<div class="toggles kinds" role="group" aria-label="Show item types"><span class="flbl">Show</span>
+      <button class="tg" style="--c:var(--accent)" data-act="kind" data-v="all" aria-pressed="${allOn}"><span class="dot"></span>Everything</button>
+      ${KINDS.map(([k, l]) => `<button class="tg" style="--c:var(--accent)" data-act="kind" data-v="${k}" aria-pressed="${S.kinds.has(k)}"><span class="dot"></span>${l}</button>`).join('')}
+    </div>`;
+  }
+  function vCalendar() {
+    const c = S.cal;
+    const vis = visibleSet();
+    const opts = { visible: vis, kinds: S.kinds };
+    let body, title;
+    if (c.mode === 'week') {
+      const start = C.startOfWeek(c.cursor);
+      const days = Array.from({ length: 7 }, (_, i) => C.addDays(start, i));
+      const a = C.toD(days[0]), b = C.toD(days[6]);
+      title = a.getMonth() === b.getMonth() ? `${a.getDate()}–${b.getDate()} ${C.MON[b.getMonth()]} ${b.getFullYear()}` : `${a.getDate()} ${C.MON[a.getMonth()]} – ${b.getDate()} ${C.MON[b.getMonth()]} ${b.getFullYear()}`;
+      body = `<div class="week">${days.map(d => {
+        const ev = C.eventsOn(d, src(), opts);
+        const lbl = S.sc.offLabel(d);
+        return `<div class="day${d === C.today() ? ' today' : ''}${lbl ? ' off' : ''}">
+          <div class="dayh"><b>${C.DOW[C.dow(d)]} ${C.toD(d).getDate()}</b>${lbl ? `<span class="offlbl">${esc(lbl)}</span>` : ''}</div>
+          ${ev.length ? ev.map(e => `<button class="mini minib" style="--c:var(--${colOf(e.child)})" data-act="ev" data-v="${e.kind}|${e.id}|${e.date}"><span class="bar"></span><span class="min0"><span class="tm">${e.time || 'All day'}${e.end ? '–' + e.end : ''}</span><span class="${e.skipped ? 'struck' : ''}">${esc(e.title)}</span><span class="sb">${esc(nameOf(e.child))}${e.skipped ? ' · skipped' : e.sub ? ' · ' + esc(e.sub) : ''}</span></span></button>`).join('') : '<p class="empty" style="font-size:13px">Nothing planned</p>'}
+        </div>`;
+      }).join('')}</div>`;
+    } else {
+      const first = c.cursor.slice(0, 8) + '01';
+      const fd = C.toD(first);
+      title = `${C.MONL[fd.getMonth()]} ${fd.getFullYear()}`;
+      const last = C.toS(new Date(fd.getFullYear(), fd.getMonth() + 1, 0));
+      const cells = [];
+      for (let d = C.startOfWeek(first), end = C.addDays(C.startOfWeek(last), 6); d <= end; d = C.addDays(d, 1)) cells.push(d);
+      const selEv = C.eventsOn(c.sel, src(), opts);
+      body = `<div class="month">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => `<div class="mh">${d}</div>`).join('')}
+        ${cells.map(d => {
+          const ev = C.eventsOn(d, src(), opts).filter(e => !e.skipped);
+          const out = d.slice(0, 7) !== first.slice(0, 7);
+          const lbl = S.sc.offLabel(d);
+          const showLbl = lbl && (lbl !== 'School holiday' || !S.sc.offDay(C.addDays(d, -1)) || d.endsWith('-01') || C.dow(d) === 1);
+          return `<button class="mc${out ? ' out' : ''}${lbl ? ' off' : ''}${d === C.today() ? ' today' : ''}" data-act="selday" data-v="${d}" aria-pressed="${d === c.sel}" aria-label="${C.fmtLong(d)}, ${ev.length} ${ev.length === 1 ? 'item' : 'items'}${lbl ? ', ' + esc(lbl) : ''}">
+            <span class="n">${C.toD(d).getDate()}</span>
+            ${showLbl ? `<span class="mlbl">${esc(lbl)}</span>` : ''}
+            <span class="dots">${ev.slice(0, 6).map(e => `<i style="--c:var(--${colOf(e.child)})"></i>`).join('')}</span>
+            ${ev.slice(0, 3).map(e => `<span class="mtxt" style="--c:var(--${colOf(e.child)})">${e.time ? e.time + ' ' : ''}${esc(e.title)}</span>`).join('')}
+            ${ev.length > 3 ? `<span class="more mtxt" style="border:0;padding:0">+${ev.length - 3} more</span>` : ''}
+          </button>`;
+        }).join('')}</div>
+        <section class="card" style="margin-top:14px"><div class="card-h"><h3>${C.fmtLong(c.sel)}</h3>${S.sc.offLabel(c.sel) ? `<span class="pill">${esc(S.sc.offLabel(c.sel))}</span>` : ''}</div>
+          ${selEv.length ? selEv.map(e => evRow(e)).join('') : '<p class="empty">Nothing planned on this day.</p>'}</section>`;
+    }
+    const noKids = !S.children.length;
+    return `<div class="view">
+      <div class="calbar">
+        <div class="ttl">${title}</div>
+        <div class="seg" role="group">${[['week', 'Week'], ['month', 'Month']].map(([v, l]) => `<button data-act="calmode" data-v="${v}" aria-pressed="${c.mode === v}">${l}</button>`).join('')}</div>
+        <div class="navpair"><button class="iconbtn" data-act="calprev" aria-label="Previous ${c.mode}">${ic('left')}</button><button class="btn" data-act="caltoday">Today</button><button class="iconbtn" data-act="calnext" aria-label="Next ${c.mode}">${ic('right')}</button></div>
+      </div>
+      <div class="filters">${toggles()}${kindToggles()}</div>
+      ${noKids ? '<section class="card"><p class="empty">Add a child first.</p></section>' : vis.size && S.kinds.size ? body : '<section class="card"><p class="empty">Switch on at least one child and one item type above to see the schedule.</p></section>'}
+      <div class="legend"><span class="swatch-off"></span>School holiday or day off. Weekly activities pause on these days unless set to run in holidays. Tasks, exams and study join this calendar in milestones 3 and 4.</div>
+    </div>`;
+  }
+
+  function termsCard() {
+    const s = C.today();
+    const terms = S.terms.slice().sort((a, b) => a.start.localeCompare(b.start));
+    const shownTerms = S.pastTerms ? terms : terms.filter(t => t.end >= s);
+    const days = S.daysoff.slice().sort((a, b) => a.date.localeCompare(b.date));
+    const shownDays = S.pastTerms ? days : days.filter(d => (d.end || d.date) >= s).slice(0, 6);
+    const badge = r => !r.official ? '<span class="pill">Added by you</span>' : isEdited(r) ? '<span class="pill warn">Edited</span>' : '';
+    const range = (a, b) => `${C.fmtDay(a)} – ${C.fmtDay(b)} ${b.slice(0, 4)}`;
+    return `<section class="card" id="terms"><div class="card-h"><h3>School terms and holidays</h3></div>
+      <p class="small">Imported from the official calendar for public schools. Change anything to match your school; your changes are kept when new dates are added.</p>
+      <div class="group-h" style="margin-top:14px">Terms</div>
+      ${shownTerms.map(t => `<div class="set"><span class="min0"><b>${esc(t.name)}</b>${S.sc.termOf(s) === t ? ' <span class="pill on">Now</span>' : ''} ${badge(t)}<span class="meta" style="display:block">${range(t.start, t.end)}</span></span><button class="btn sm" data-act="term-edit" data-v="${t.id}">Edit</button></div>`).join('') || '<p class="empty">No terms.</p>'}
+      <div class="group-h" style="margin-top:14px">Public holidays and days off</div>
+      ${shownDays.map(d => `<div class="set"><span class="min0"><b>${esc(d.name)}</b> ${badge(d)}<span class="meta" style="display:block">${d.end && d.end > d.date ? range(d.date, d.end) : C.fmtDay(d.date) + ' ' + d.date.slice(0, 4)}</span></span><button class="btn sm" data-act="day-edit" data-v="${d.id}">Edit</button></div>`).join('') || '<p class="empty">No days off coming up.</p>'}
+      <div class="row" style="margin-top:12px"><button class="btn sm" data-act="day-add">Add day off</button><button class="btn sm" data-act="term-add">Add term</button><button class="btn sm" data-act="past-terms">${S.pastTerms ? 'Show fewer dates' : 'Show all dates'}</button></div>
+      <div class="row" style="margin-top:8px;justify-content:space-between"><span class="meta">School dates loaded up to ${S.sc.coverEnd ? C.fmtDate(S.sc.coverEnd) : '—'}.</span><button class="btn sm del" data-act="terms-reset">Reset to official dates</button></div>
+    </section>`;
   }
 
   function vSettings() {
@@ -190,6 +397,8 @@
       <section class="card"><div class="card-h"><h3>Children</h3><button class="btn sm" data-act="child-add">Add child</button></div>
         ${S.children.map(c => `<div class="set"><span class="row" style="flex-wrap:nowrap">${avatar(c)}<span class="min0"><b>${esc(c.name)}</b> <span class="muted">· ${esc(c.grade || '')}</span></span></span><button class="btn sm" data-act="child-edit" data-v="${c.id}">Edit</button></div>`).join('') || '<p class="empty">No children yet.</p>'}
       </section>
+
+      ${termsCard()}
 
       <section class="card"><div class="card-h"><h3>Family</h3></div>
         <form class="row" data-form="family" style="flex-wrap:nowrap"><input id="set-family" placeholder="Family name (optional)" value="${esc(S.family)}" aria-label="Family name" autocomplete="off"><button class="btn" type="submit">Save</button></form>
@@ -275,6 +484,97 @@
     </div></div>`;
   }
 
+  /* ---------- Milestone 2 sheets ---------- */
+  const panel = (title, inner) => `<div class="scrim" data-act="close-bg"><div class="panel" role="dialog" aria-modal="true" aria-labelledby="sh-h"><h2 id="sh-h">${title}</h2>${inner}</div></div>`;
+  const childSelect = sel => `<label>Child<select id="f-child">${S.children.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`;
+  const delBtn = (sh, what) => `<button type="button" class="btn del${sh.confirm ? ' armed' : ''}" data-act="rec-del">${sh.confirm ? `Tap again to delete ${what}` : 'Delete'}</button>`;
+  const typePills = cur => `<div class="types" role="group" aria-label="What to add">${[['activity', 'Weekly activity'], ['reminder', 'Reminder']].map(([k, l]) => `<button type="button" data-act="add-type" data-v="${k}" aria-pressed="${k === cur}">${l}</button>`).join('')}<button type="button" disabled title="Arrives in milestone 3">Homework · M3</button></div>`;
+  const defaultDate = () => (S.view === 'calendar' ? (S.cal.mode === 'month' ? S.cal.sel : (S.cal.cursor >= C.today() ? S.cal.cursor : C.today())) : C.today());
+
+  function activitySheet() {
+    const sh = S.sheet;
+    const a = sh.id ? S.activities.find(x => x.id === sh.id) : null;
+    const days = a ? a.weekdays : [C.dow(defaultDate())];
+    return panel(a ? `Edit ${esc(a.title)}` : 'Add', `${a ? '' : typePills('activity')}
+      <form class="form" data-form="activity" style="margin-top:${a ? 14 : 0}px">
+        ${childSelect(a ? a.owner : sh.child)}
+        <label>Activity<input id="f-title" value="${esc(a?.title || '')}" placeholder="e.g. Hockey practice" autocomplete="off"></label>
+        <div class="full fieldset"><span class="flbl">Days</span><div class="daychips" role="group" aria-label="Days">${WEEK_ORDER.map(d => `<button type="button" class="dchip" data-act="day-toggle" data-day="${d}" aria-pressed="${days.includes(d)}">${C.DOW[d]}</button>`).join('')}</div></div>
+        <label>Starts<input id="f-start" type="time" value="${a?.start || '15:00'}"></label>
+        <label>Ends (optional)<input id="f-end" type="time" value="${a?.end || ''}"></label>
+        <label class="full">Where (optional)<input id="f-place" value="${esc(a?.place || '')}" placeholder="e.g. School astro" autocomplete="off"></label>
+        <label>From<input id="f-from" type="date" value="${a?.from || C.today()}"></label>
+        <label>Until (optional)<input id="f-until" type="date" value="${a?.until || ''}"></label>
+        <label class="chk full"><input id="f-pause" type="checkbox" ${a?.runsInHolidays ? '' : 'checked'}>Pause during school holidays and days off</label>
+        <div class="err full" id="f-err" role="alert"></div>
+        <div class="actions full">${a ? delBtn(sh, 'this activity') : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${a ? 'Save' : 'Add activity'}</button></div>
+      </form>`);
+  }
+
+  function reminderSheet() {
+    const sh = S.sheet;
+    const r = sh.id ? S.reminders.find(x => x.id === sh.id) : null;
+    return panel(r ? `Edit ${esc(r.title)}` : 'Add', `${r ? '' : typePills('reminder')}
+      <form class="form" data-form="reminder" style="margin-top:${r ? 14 : 0}px">
+        ${childSelect(r ? r.owner : sh.child)}
+        <label>Reminder<input id="f-title" value="${esc(r?.title || '')}" placeholder="e.g. Return permission slip" autocomplete="off"></label>
+        <label>Date<input id="f-date" type="date" value="${r?.date || defaultDate()}"></label>
+        <label>Time (optional)<input id="f-time" type="time" value="${r?.time || ''}"></label>
+        <label>Repeats<select id="f-repeat">${C.REPEATS.map(([k, l]) => `<option value="${k}" ${k === (r?.repeat || 'none') ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label>Repeat until (optional)<input id="f-until" type="date" value="${r?.until || ''}"></label>
+        <div class="err full" id="f-err" role="alert"></div>
+        <div class="actions full">${r ? delBtn(sh, 'this reminder') : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${r ? 'Save' : 'Add reminder'}</button></div>
+      </form>`);
+  }
+
+  function eventSheet() {
+    const sh = S.sheet;
+    const isAct = sh.ekind === 'act';
+    const rec = isAct ? S.activities.find(x => x.id === sh.id) : S.reminders.find(x => x.id === sh.id);
+    if (!rec) return panel('Not found', '<p class="small" style="margin:12px 0">This item was removed.</p><div class="actions"><button class="btn" data-act="close">Close</button></div>');
+    const skipped = (rec.skips || []).includes(sh.date);
+    const repeating = isAct || (rec.repeat && rec.repeat !== 'none');
+    const info = isAct ? actSummary(rec) : `${C.fmtDay(rec.date)}${rec.time ? ' at ' + rec.time : ''} · ${C.REPEATS.find(x => x[0] === (rec.repeat || 'none'))[1]}${rec.until ? ` until ${C.fmtDate(rec.until)}` : ''}`;
+    return panel(esc(rec.title), `
+      <div class="evhead" style="--c:var(--${colOf(rec.owner)})">${avatar(kidOf(rec.owner) || { name: '?', colour: 'c1' })}<span class="min0"><b>${esc(nameOf(rec.owner))}</b> · ${KLABEL[sh.ekind]}<span class="meta" style="display:block">${info}</span></span></div>
+      <div class="card sunk" style="margin:12px 0"><b>${C.fmtLong(sh.date)}</b>${isAct && rec.start ? ` · ${rec.start}${rec.end ? '–' + rec.end : ''}` : !isAct && rec.time ? ` · ${rec.time}` : ''}${skipped ? ' <span class="pill warn">Skipped</span>' : ''}</div>
+      <div class="actions" style="justify-content:flex-start">
+        ${repeating ? `<button class="btn" data-act="ev-skip">${skipped ? 'Undo skip' : `Skip ${C.fmtDay(sh.date)} only`}</button>` : ''}
+        <button class="btn pri" data-act="ev-edit">Edit ${isAct ? 'activity' : 'reminder'}</button>
+        <button class="btn" data-act="close">Close</button>
+      </div>`);
+  }
+
+  function termSheet() {
+    const sh = S.sheet;
+    const t = sh.id ? S.terms.find(x => x.id === sh.id) : null;
+    const o = t?.official;
+    return panel(t ? `Edit ${esc(t.name)}` : 'Add a term', `
+      <form class="form" data-form="term" style="margin-top:14px">
+        <label class="full">Name<input id="f-title" value="${esc(t?.name || '')}" placeholder="e.g. Term 1 2028" autocomplete="off"></label>
+        <label>First day<input id="f-start" type="date" value="${t?.start || ''}"></label>
+        <label>Last day<input id="f-end" type="date" value="${t?.end || ''}"></label>
+        ${o ? `<p class="hint full">Official dates: ${C.fmtDay(o.start)} – ${C.fmtDay(o.end)} ${o.end.slice(0, 4)}.${isEdited(t) ? ' <button type="button" class="linkbtn" data-act="use-official">Use the official dates</button>' : ''}</p>` : ''}
+        <div class="err full" id="f-err" role="alert"></div>
+        <div class="actions full">${t ? delBtn(sh, 'this term') : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${t ? 'Save' : 'Add term'}</button></div>
+      </form>`);
+  }
+
+  function dayoffSheet() {
+    const sh = S.sheet;
+    const d = sh.id ? S.daysoff.find(x => x.id === sh.id) : null;
+    const o = d?.official;
+    return panel(d ? `Edit ${esc(d.name)}` : 'Add a day off', `
+      <form class="form" data-form="dayoff" style="margin-top:14px">
+        <label class="full">Name<input id="f-title" value="${esc(d?.name || '')}" placeholder="e.g. Sports day, staff development day" autocomplete="off"></label>
+        <label>Date<input id="f-date" type="date" value="${d?.date || C.today()}"></label>
+        <label>Last day (optional)<input id="f-end" type="date" value="${d?.end || ''}"></label>
+        <p class="hint full">Activities set to pause in holidays don't show on days off.${o ? ` Official date: ${C.fmtDay(o.date)} ${o.date.slice(0, 4)}.` : ''}${o && isEdited(d) ? ' <button type="button" class="linkbtn" data-act="use-official">Use the official date</button>' : ''}</p>
+        <div class="err full" id="f-err" role="alert"></div>
+        <div class="actions full">${d ? delBtn(sh, 'this day off') : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${d ? 'Save' : 'Add day off'}</button></div>
+      </form>`);
+  }
+
   /* ---------- Render ---------- */
   const NAV = [['today', 'Today'], ['calendar', 'Calendar'], ['tasks', 'Tasks'], ['study', 'Study'], ['money', 'Money']];
   const TITLES = { today: 'Family Hub', calendar: 'Calendar', tasks: 'Tasks', study: 'Study planner', money: 'Money', settings: 'Settings' };
@@ -288,7 +588,8 @@
       app.innerHTML = vSetup(); renderSheet(); return;
     }
     const v = S.view;
-    const content = v === 'today' ? vToday() : v === 'settings' ? vSettings() : v === 'child' ? vChild(S.child) : COMING[v] ? vComing(v) : vToday();
+    const content = v === 'today' ? vToday() : v === 'calendar' ? vCalendar() : v === 'settings' ? vSettings() : v === 'child' ? vChild(S.child) : COMING[v] ? vComing(v) : vToday();
+    const fab = ['today', 'calendar', 'child'].includes(v) && S.children.length;
     const title = v === 'child' ? (S.children.find(c => c.id === S.child)?.name || 'Child') : TITLES[v] || 'Family Hub';
     const cur = k => (v === k ? 'aria-current="page"' : '');
     app.innerHTML = `<div class="shell">
@@ -306,13 +607,16 @@
         ${content}
       </main>
       <nav class="tabbar" aria-label="Main">${NAV.map(([k, l]) => `<button data-act="nav" data-v="${k}" ${cur(k)}>${ic(k)}${l}</button>`).join('')}</nav>
+      ${fab ? `<button class="fab" data-act="add" data-v="${S.lastAdd || 'activity'}"${v === 'child' ? ` data-child="${S.child}"` : ''}>${ic('plus')}Add</button>` : ''}
     </div>${restoreInput()}`;
     renderSheet();
   }
   function renderSheet() {
     const el = $('#sheet');
     if (!S.sheet) { el.hidden = true; el.innerHTML = ''; return; }
-    el.innerHTML = S.sheet.kind === 'child' ? childSheet() : restoreSheet();
+    const k = S.sheet.kind;
+    el.innerHTML = k === 'child' ? childSheet() : k === 'restore' ? restoreSheet() : k === 'activity' ? activitySheet()
+      : k === 'reminder' ? reminderSheet() : k === 'event' ? eventSheet() : k === 'term' ? termSheet() : dayoffSheet();
     el.hidden = false;
   }
 
@@ -344,6 +648,84 @@
     await data.save('people', rec);
     S.sheet = null; await load(); render();
     toast(sh.id ? `${name} updated.` : `${name} added.`);
+  }
+
+  /* ---------- Milestone 2 saves ---------- */
+  const val = id => ($(id)?.value ?? '').trim();
+  const fail = m => { const e = $('#f-err'); if (e) e.textContent = m; return false; };
+
+  async function saveActivity() {
+    const sh = S.sheet;
+    const title = val('#f-title');
+    const weekdays = [...document.querySelectorAll('.dchip[aria-pressed="true"]')].map(b => Number(b.dataset.day));
+    const start = val('#f-start'), end = val('#f-end'), from = val('#f-from'), until = val('#f-until');
+    if (!title) return fail('Give the activity a name, for example Hockey practice.');
+    if (!weekdays.length) return fail('Choose at least one day of the week.');
+    if (!C.isTime(start)) return fail('Enter the start time.');
+    if (end && !C.isTime(end)) return fail('The end time is not a valid time.');
+    if (end && end <= start) return fail('The end time must be after the start time.');
+    if (from && !C.isDate(from)) return fail('The From date is not a valid date.');
+    if (until && !C.isDate(until)) return fail('The Until date is not a valid date.');
+    if (from && until && until < from) return fail('The Until date must be on or after the From date.');
+    const rec = { owner: val('#f-child'), title, weekdays, start, end, place: val('#f-place'), from: from || C.today(), until, runsInHolidays: !$('#f-pause').checked };
+    if (sh.id) rec.id = sh.id; else rec.skips = [];
+    await data.save('activities', rec);
+    S.sheet = null; S.lastAdd = 'activity'; await load(); render();
+    toast(`${title} ${sh.id ? 'updated' : `added for ${nameOf(rec.owner)}: ${daysText(weekdays).toLowerCase() === 'every day' ? 'every day' : daysText(weekdays)}`}.`);
+    return true;
+  }
+  async function saveReminder() {
+    const sh = S.sheet;
+    const title = val('#f-title'), date = val('#f-date'), time = val('#f-time'), repeat = val('#f-repeat'), until = val('#f-until');
+    if (!title) return fail('Give the reminder a name.');
+    if (!C.isDate(date)) return fail('Choose the date for the reminder.');
+    if (time && !C.isTime(time)) return fail('The time is not a valid time.');
+    if (until && !C.isDate(until)) return fail('The Repeat until date is not a valid date.');
+    if (until && until < date) return fail('Repeat until must be on or after the reminder date.');
+    const rec = { owner: val('#f-child'), title, date, time, repeat, until: repeat === 'none' ? '' : until };
+    if (sh.id) rec.id = sh.id; else rec.skips = [];
+    await data.save('reminders', rec);
+    S.sheet = null; S.lastAdd = 'reminder'; await load();
+    if (S.view === 'calendar') { S.cal.cursor = date; S.cal.sel = date; }
+    render();
+    toast(`${title} ${sh.id ? 'updated' : 'added'} for ${C.fmtDay(date)}.`);
+    return true;
+  }
+  async function saveTerm() {
+    const sh = S.sheet;
+    const name = val('#f-title'), start = val('#f-start'), end = val('#f-end');
+    if (!name) return fail('Give the term a name, for example Term 1 2028.');
+    if (!C.isDate(start) || !C.isDate(end)) return fail('Choose the first and last day of the term.');
+    if (end <= start) return fail('The last day must be after the first day.');
+    const clash = S.terms.find(t => t.id !== sh.id && start <= t.end && end >= t.start);
+    if (clash) return fail(`These dates overlap ${clash.name} (${C.fmtDay(clash.start)} – ${C.fmtDay(clash.end)} ${clash.end.slice(0, 4)}). Change one of them.`);
+    const rec = { name, start, end };
+    if (sh.id) rec.id = sh.id;
+    await data.save('terms', rec);
+    S.sheet = null; await load(); render();
+    toast(`${name} saved. Activities follow the new dates.`);
+    return true;
+  }
+  async function saveDayoff() {
+    const sh = S.sheet;
+    const name = val('#f-title'), date = val('#f-date'), end = val('#f-end');
+    if (!name) return fail('Give the day off a name, for example Sports day.');
+    if (!C.isDate(date)) return fail('Choose the date.');
+    if (end && (!C.isDate(end) || end < date)) return fail('The last day must be on or after the first day.');
+    const rec = { name, date, end: end && end > date ? end : '' };
+    if (sh.id) rec.id = sh.id;
+    await data.save('daysoff', rec);
+    S.sheet = null; await load(); render();
+    toast(`${name} saved. Activities that pause in holidays won't show that day.`);
+    return true;
+  }
+
+  function openAdd(kind, child) {
+    if (!S.children.length) { toast('Add a child first.'); return; }
+    const vis = S.children.filter(c => !S.hidden.has(c.id));
+    const pick = child || (S.view === 'child' ? S.child : (vis.length === 1 ? vis[0].id : S.children[0].id));
+    S.sheet = { kind, child: pick }; renderSheet();
+    setTimeout(() => $('#f-title')?.focus(), 30);
   }
 
   async function finishSetup() {
@@ -405,6 +787,7 @@
     if (!sh.confirm) { sh.confirm = true; renderSheet(); return; }
     try {
       await data.restoreBackup(sh.backup);
+      await importOfficial();
       S.sheet = null; S.setup = null; await loadSettings(); await load(); go('today');
       toast('Backup restored. This device now has the same data as the backup.');
     } catch (e) { sh.error = `Nothing was changed. ${e.message}`; sh.confirm = false; renderSheet(); }
@@ -446,6 +829,8 @@
           const sh = S.sheet;
           if (!sh.confirm) { sh.confirm = true; b.classList.add('armed'); b.textContent = `Tap again to remove ${S.children.find(c => c.id === sh.id)?.name || 'this child'}`; return; }
           const name = S.children.find(c => c.id === sh.id)?.name;
+          for (const x of S.activities.filter(r => r.owner === sh.id)) await data.remove('activities', x.id);
+          for (const x of S.reminders.filter(r => r.owner === sh.id)) await data.remove('reminders', x.id);
           await data.remove('people', sh.id);
           S.sheet = null; await load();
           if (S.view === 'child' && S.child === sh.id) go('today'); else render();
@@ -463,6 +848,75 @@
         case 'check-text': { const t = $('#restore-text').value.trim(); if (!t) { S.sheet.error = 'Paste the backup text first, or choose the backup file.'; renderSheet(); return; } checkBackupText(t, false); return; }
         case 'do-restore': await doRestore(); return;
         case 'persist': await tryPersist(true); return;
+        /* calendar */
+        case 'vis':
+          if (v === 'all') S.hidden = new Set(); else S.hidden.has(v) ? S.hidden.delete(v) : S.hidden.add(v);
+          saveCalPrefs(); render(); return;
+        case 'kind':
+          if (v === 'all') S.kinds = new Set(KINDS.map(x => x[0])); else S.kinds.has(v) ? S.kinds.delete(v) : S.kinds.add(v);
+          saveCalPrefs(); render(); return;
+        case 'calmode': S.cal.mode = v; if (v === 'month') S.cal.sel = S.cal.cursor; saveCalPrefs(); render(); return;
+        case 'calprev': case 'calnext': {
+          const dir = a === 'calnext' ? 1 : -1;
+          if (S.cal.mode === 'week') S.cal.cursor = C.addDays(S.cal.cursor, 7 * dir);
+          else { const d = C.toD(S.cal.cursor.slice(0, 8) + '01'); d.setMonth(d.getMonth() + dir); S.cal.cursor = C.toS(d); S.cal.sel = S.cal.cursor; }
+          render(); return;
+        }
+        case 'caltoday': S.cal.cursor = C.today(); S.cal.sel = C.today(); render(); return;
+        case 'selday': S.cal.sel = v; S.cal.cursor = v; render(); return;
+        /* adding and editing */
+        case 'add': openAdd(v, b.dataset.child); return;
+        case 'add-type': {
+          const child = $('#f-child')?.value, title = $('#f-title')?.value;
+          S.sheet = { kind: v, child }; renderSheet();
+          if (title) $('#f-title').value = title;
+          return;
+        }
+        case 'day-toggle': b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); return;
+        case 'ev': { const [k, id, date] = v.split('|'); S.sheet = { kind: 'event', ekind: k, id, date }; renderSheet(); return; }
+        case 'ev-skip': {
+          const sh = S.sheet;
+          const store = sh.ekind === 'act' ? 'activities' : 'reminders';
+          const rec = (sh.ekind === 'act' ? S.activities : S.reminders).find(x => x.id === sh.id);
+          const skips = new Set(rec.skips || []);
+          const undo = skips.has(sh.date);
+          undo ? skips.delete(sh.date) : skips.add(sh.date);
+          await data.save(store, { id: rec.id, skips: [...skips].sort() });
+          await load(); render(); renderSheet();
+          toast(undo ? `${rec.title} is back on for ${C.fmtDay(sh.date)}.` : `${rec.title} skipped on ${C.fmtDay(sh.date)} only.`);
+          return;
+        }
+        case 'ev-edit': S.sheet = { kind: S.sheet.ekind === 'act' ? 'activity' : 'reminder', id: S.sheet.id }; renderSheet(); return;
+        case 'act-edit': S.sheet = { kind: 'activity', id: v }; renderSheet(); return;
+        case 'term-edit': S.sheet = { kind: 'term', id: v }; renderSheet(); return;
+        case 'term-add': S.sheet = { kind: 'term' }; renderSheet(); return;
+        case 'day-edit': S.sheet = { kind: 'dayoff', id: v }; renderSheet(); return;
+        case 'day-add': S.sheet = { kind: 'dayoff' }; renderSheet(); return;
+        case 'past-terms': S.pastTerms = !S.pastTerms; render(); return;
+        case 'use-official': {
+          const sh = S.sheet;
+          const rec = (sh.kind === 'term' ? S.terms : S.daysoff).find(x => x.id === sh.id);
+          if (!rec?.official) return;
+          for (const [k2, v2] of Object.entries(rec.official)) { const f = { name: '#f-title', start: '#f-start', end: '#f-end', date: '#f-date' }[k2]; if (f && $(f)) $(f).value = v2; }
+          toast('Official dates filled in. Tap Save to keep them.');
+          return;
+        }
+        case 'terms-reset':
+          if (!b.classList.contains('armed')) { b.classList.add('armed'); b.textContent = 'Tap again to reset official dates'; return; }
+          await resetOfficial(); await load(); render();
+          toast('Official terms and holidays restored. Days off you added are kept.');
+          return;
+        case 'rec-del': {
+          const sh = S.sheet;
+          if (!sh.confirm) { sh.confirm = true; b.classList.add('armed'); b.textContent = 'Tap again to delete'; return; }
+          const store = { activity: 'activities', reminder: 'reminders', term: 'terms', dayoff: 'daysoff' }[sh.kind];
+          const list = { activity: S.activities, reminder: S.reminders, term: S.terms, dayoff: S.daysoff }[sh.kind];
+          const rec = list.find(x => x.id === sh.id);
+          await data.remove(store, sh.id);
+          S.sheet = null; await load(); render();
+          toast(`${rec?.title || rec?.name || 'Item'} deleted.`);
+          return;
+        }
         case 'install': if (S.installEvt) { S.installEvt.prompt(); const r = await S.installEvt.userChoice; S.installEvt = null; render(); if (r.outcome === 'accepted') toast('Family Hub is being installed.'); } return;
         default: return;
       }
@@ -477,6 +931,10 @@
     const f = ev.target.dataset.form;
     try {
       if (f === 'child') await saveChild();
+      if (f === 'activity') await saveActivity();
+      if (f === 'reminder') await saveReminder();
+      if (f === 'term') await saveTerm();
+      if (f === 'dayoff') await saveDayoff();
       if (f === 'family') { await data.setSetting('familyName', $('#set-family').value.trim()); S.family = $('#set-family').value.trim(); render(); toast('Family name saved.'); }
     } catch (e) { console.error(e); toast(`Nothing was saved: ${e.message}`); }
   });
@@ -506,6 +964,14 @@
   /* ---------- Offline support (only when the app has its own web address) ---------- */
   if ('serviceWorker' in navigator && !inFrame && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(e => console.warn('Offline support not available:', e)); });
+    /* When a new version has been downloaded, switch to it straight away unless a form is open. */
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloaded) return;
+      if (S.sheet) { toast('Family Hub has been updated. Close and reopen it to use the new version.'); return; }
+      reloaded = true; location.reload();
+    });
   }
 
   /* ---------- Start ---------- */
@@ -514,6 +980,7 @@
     render();
     try {
       await data.ready();
+      await importOfficial();
       await loadSettings();
       await load();
       await refreshStorage();

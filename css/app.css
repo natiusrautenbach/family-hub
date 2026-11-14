@@ -329,3 +329,21 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .kid .st{min-height:1.3em}
 .phead .btn{align-self:center}
 @media (max-width:420px){.kids{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* ---------- Milestone 2 ---------- */
+.evb{width:100%;background:none;border:0;border-top:1px solid var(--line);text-align:left;color:inherit;font:inherit;cursor:pointer;border-radius:0}
+.card-h + .evb,.evb:first-child{border-top:0}
+.evb:hover .ti{text-decoration:underline;text-decoration-color:var(--line)}
+.ev .ti,.ev .sub,.ev .t small{display:block}
+.tag.act{background:color-mix(in srgb,var(--c) 16%,transparent);color:var(--ink)}
+.minib{width:100%;background:none;border:0;border-top:1px dashed var(--line);text-align:left;color:inherit;font:inherit;cursor:pointer}
+.minib .tm,.minib .sb,.minib .min0 > span{display:block}
+.daychips{display:flex;flex-wrap:wrap;gap:6px}
+.dchip{min-width:46px;padding:7px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:13.5px;color:var(--muted)}
+.dchip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.types button:disabled{opacity:.5;border-style:dashed}
+.nudge{margin-top:10px;padding:12px;border-radius:10px;background:var(--sunk);display:grid;gap:8px;justify-items:start}
+.linkbtn{background:none;border:0;padding:0;color:var(--accent);font-weight:700;text-decoration:underline;cursor:pointer;font-size:inherit}
+.evhead{display:flex;gap:10px;align-items:center;margin-top:10px}
+.btn.del.armed{background:var(--bad);color:var(--surface);border-color:var(--bad)}
+.set .pill{margin-left:4px}

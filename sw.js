@@ -1,16 +1,17 @@
 /* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
 /* Family Hub · offline support
+   Files are fetched fresh (not from the browser cache) when a new version installs.
    Keeps the app's own files on the device so it opens without internet.
    Raise VERSION with every release so devices pick up the new files. */
-const VERSION = 'fh-0.1.0';
+const VERSION = 'fh-0.2.0';
 const SHELL = [
-  './', 'index.html', 'css/app.css', 'js/db.js', 'js/app.js', 'manifest.webmanifest',
+  './', 'index.html', 'css/app.css', 'js/db.js', 'js/cal.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
 ];
 const FONTS = 'fh-fonts';
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {

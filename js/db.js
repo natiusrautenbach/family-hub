@@ -10,18 +10,21 @@
   const FH = (window.FH = window.FH || {});
 
   const DB_NAME = 'family-hub';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   const BACKUP_FORMAT = 1;
 
-  /* Stores used by milestone 1. Later milestones add stores by raising
-     DB_VERSION and adding to this map; existing data is kept. */
+  /* Each milestone adds stores by raising DB_VERSION and adding to this map;
+     data already on the device is kept when the app updates. */
   const SCHEMA = {
-    people:    { indexes: ['type'] },          // children (and adults from Phase 2)
-    users:     { indexes: ['role'] },          // who uses the app: parent now, children later
-    approvals: { indexes: ['status'] },        // child requests waiting for a parent (later)
-    meta:      { indexes: [] },                // settings and device info
+    people:     { indexes: ['type'] },          // children (and adults from Phase 2)
+    users:      { indexes: ['role'] },          // who uses the app: parent now, children later
+    approvals:  { indexes: ['status'] },        // child requests waiting for a parent (later)
+    meta:       { indexes: [] },                // settings and device info
+    activities: { indexes: ['owner'] },         // milestone 2: weekly activities
+    reminders:  { indexes: ['owner', 'date'] }, // milestone 2: one-off and repeating reminders
+    terms:      { indexes: ['start'] },         // milestone 2: school terms (official or yours)
+    daysoff:    { indexes: ['date'] },          // milestone 2: public holidays and school days off
   };
-  const SYNCED = ['people', 'users', 'approvals'];
 
   const now = () => new Date().toISOString();
   const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
@@ -92,9 +95,17 @@
     parent: { '*': ['read', 'create', 'update', 'delete'] },
     child_view: {
       people: ['read:own'],
+      activities: ['read:own'],
+      reminders: ['read:own'],
+      terms: ['read'],
+      daysoff: ['read'],
     },
     child_limited: {
       people: ['read:own'],
+      activities: ['read:own'],
+      reminders: ['read:own'],
+      terms: ['read'],
+      daysoff: ['read'],
       approvals: ['read:own', 'create:own'],
     },
   };
@@ -169,6 +180,10 @@
       /* Soft delete: kept as a marker so a later sync knows it was removed. */
       await raw.put(store, Object.assign({}, r, { deleted: true, updatedAt: t, updatedBy: currentUser.id, device: deviceId }));
     },
+
+    /* Whether a record id has ever existed here, including removed ones.
+       Used so the official school calendar never brings back what you removed. */
+    async known(store, id) { return !!(await raw.get(store, id)); },
 
     async getSetting(key, fallback) { const r = await raw.get('meta', key); return r ? r.value : fallback; },
     async setSetting(key, value) {
