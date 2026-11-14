@@ -10,7 +10,7 @@
   const FH = (window.FH = window.FH || {});
 
   const DB_NAME = 'family-hub';
-  const DB_VERSION = 4;
+  const DB_VERSION = 5;
   const BACKUP_FORMAT = 1;
 
   /* Each milestone adds stores by raising DB_VERSION and adding to this map;
@@ -28,6 +28,10 @@
     periods:    { indexes: ['owner'] },                 // milestone 4: exam periods
     exams:      { indexes: ['owner', 'period', 'date'] }, // milestone 4: exams in a period
     sessions:   { indexes: ['owner', 'period', 'date'] }, // milestone 4: revision sessions
+    accounts:   { indexes: ['owner'] },                 // milestone 5: bank accounts and cash (amounts in cents)
+    entries:    { indexes: ['owner', 'account', 'date'] }, // milestone 5: deposits, withdrawals, adjustments
+    goals:      { indexes: ['owner', 'account'] },      // milestone 5: savings goals, a share of an account
+    ledger:     { indexes: ['owner', 'date'] },         // milestone 5: money owed either way
   };
 
   const now = () => new Date().toISOString();
@@ -107,6 +111,10 @@
       periods: ['read:own'],
       exams: ['read:own'],
       sessions: ['read:own'],
+      accounts: ['read:own'],
+      entries: ['read:own'],
+      goals: ['read:own'],
+      ledger: ['read:own'],
     },
     child_limited: {
       people: ['read:own'],
@@ -118,6 +126,10 @@
       periods: ['read:own'],
       exams: ['read:own'],
       sessions: ['read:own', 'update:own'],
+      accounts: ['read:own'],
+      entries: ['read:own'],
+      goals: ['read:own'],
+      ledger: ['read:own'],
       approvals: ['read:own', 'create:own'],
     },
   };
