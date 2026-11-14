@@ -125,11 +125,21 @@
       if (!reminderOn(r, s)) continue;
       out.push({ kind: 'rem', id: r.id, child: r.owner, date: s, time: r.time || '', end: '', title: r.title, sub: r.repeat && r.repeat !== 'none' ? REPEATS.find(x => x[0] === r.repeat)[1] : 'Reminder', skipped: false });
     }
+    /* Tasks show on their due date with their undated steps; a step with its own date shows on that day. */
+    for (const t of src.tasks || []) {
+      if (t.due === s) out.push({ kind: 'task', id: t.id, child: t.owner, date: s, time: '', end: '', title: t.title, sub: `${t.subject ? t.subject + ' ' : ''}${(t.type || 'task').toLowerCase()} due`, done: !!t.done, skipped: false, steps: (t.steps || []).filter(st => !st.due) });
+      for (const st of t.steps || []) {
+        if (st.due === s) out.push({ kind: 'step', id: t.id, stepId: st.id, child: t.owner, date: s, time: '', end: '', title: st.text, sub: `Step of ${t.title}`, done: !!(st.done || t.done), skipped: false });
+      }
+    }
     return out
       .filter(e => !o.visible || o.visible.has(e.child))
-      .filter(e => !o.kinds || o.kinds.has(e.kind))
+      .filter(e => !o.kinds || o.kinds.has(GROUP[e.kind]))
       .sort((x, y) => (x.time || '99:99').localeCompare(y.time || '99:99') || x.title.localeCompare(y.title));
   }
+
+  /* Which Show filter each kind of calendar item belongs to. */
+  const GROUP = { act: 'act', rem: 'rem', task: 'task', step: 'task' };
 
   FH.cal = {
     pad, toD, toS, today, addDays, dow, diffDays, startOfWeek, isDate, isTime,

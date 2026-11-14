@@ -1,15 +1,15 @@
 /* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Family Hub · app (beta, milestone 2)
+/* Family Hub · app (beta, milestone 3)
    Screens: first-time setup, Today, Calendar (activities, reminders, school
-   terms), child pages, Settings. Tasks, Study and Money arrive in milestones
-   3 to 6 and show what is coming until then. */
+   terms, tasks), Tasks (homework and projects), child pages, Settings.
+   Study and Money arrive in milestones 4 to 6 and show what is coming until then. */
 (function () {
   'use strict';
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '0.2.0';
-  const MILESTONE = 2;
+  const VERSION = '0.3.0';
+  const MILESTONE = 3;
 
   /* ---------- Small helpers ---------- */
   const $ = s => document.querySelector(s);
@@ -41,7 +41,6 @@
     [7, 'Today and hand-over', 'Daily digest, child pages, install guide'],
   ];
   const COMING = {
-    tasks: { m: 3, title: 'Tasks', text: 'Homework and projects with a due date, priority, notes and steps. Steps can have their own due dates and show on the calendar.' },
     study: { m: 4, title: 'Study planner', text: 'Photograph an exam timetable, check what was read, and get a revision plan you can adjust and tick off.' },
     money: { m: 5, title: 'Money', text: 'Bank balances with history, savings goals shared by percentage, and money owed each way. Chores and reward goals follow in milestone 6.' },
   };
@@ -59,16 +58,17 @@
     /* milestone 2 */
     activities: [], reminders: [], terms: [], daysoff: [], sc: null,
     hidden: new Set(),                      // children switched off on the calendar
-    kinds: new Set(['act', 'rem']),         // item types shown on the calendar
+    kinds: new Set(['act', 'rem', 'task']), // item types shown on the calendar
+    tasks: [], taskFilter: 'open', openTask: null,
     cal: { mode: 'week', cursor: C.today(), sel: C.today() },
     pastTerms: false,
   };
-  const KINDS = [['act', 'Activities'], ['rem', 'Reminders']];
+  const KINDS = [['act', 'Activities'], ['rem', 'Reminders'], ['task', 'Tasks']];
   try {
     const saved = JSON.parse(localStorage.getItem('fh-cal') || 'null');
-    if (saved) { if (saved.mode) S.cal.mode = saved.mode; if (Array.isArray(saved.kinds)) S.kinds = new Set(saved.kinds.filter(k => KINDS.some(x => x[0] === k))); if (Array.isArray(saved.hidden)) S.hidden = new Set(saved.hidden); }
+    if (saved) { if (saved.mode) S.cal.mode = saved.mode; if (Array.isArray(saved.kinds)) { S.kinds = new Set(saved.kinds.filter(k => KINDS.some(x => x[0] === k))); for (const [k] of KINDS) if (!(saved.seen || ['act', 'rem']).includes(k)) S.kinds.add(k); } if (Array.isArray(saved.hidden)) S.hidden = new Set(saved.hidden); }
   } catch (e) { /* storage not available: use defaults */ }
-  function saveCalPrefs() { try { localStorage.setItem('fh-cal', JSON.stringify({ mode: S.cal.mode, kinds: [...S.kinds], hidden: [...S.hidden] })); } catch (e) { /* ignore */ } }
+  function saveCalPrefs() { try { localStorage.setItem('fh-cal', JSON.stringify({ mode: S.cal.mode, kinds: [...S.kinds], hidden: [...S.hidden], seen: KINDS.map(x => x[0]) })); } catch (e) { /* ignore */ } }
   const visibleSet = () => new Set(S.children.filter(c => !S.hidden.has(c.id)).map(c => c.id));
   const kidOf = id => S.children.find(c => c.id === id);
   const colOf = id => kidOf(id)?.colour || 'c1';
@@ -100,6 +100,7 @@
     const kids = new Set(S.children.map(c => c.id));
     S.activities = (await data.list('activities')).filter(a => kids.has(a.owner));
     S.reminders = (await data.list('reminders')).filter(r => kids.has(r.owner));
+    S.tasks = (await data.list('tasks')).filter(t => kids.has(t.owner));
     S.terms = await data.list('terms');
     S.daysoff = await data.list('daysoff');
     S.sc = C.schoolCalendar(S.terms, S.daysoff);
@@ -187,14 +188,15 @@
   }
 
   /* ---------- Events (activities and reminders) ---------- */
-  const src = () => ({ activities: S.activities, reminders: S.reminders, sc: S.sc });
-  const KLABEL = { act: 'Activity', rem: 'Reminder' };
+  const src = () => ({ activities: S.activities, reminders: S.reminders, tasks: S.tasks, sc: S.sc });
+  const KLABEL = { act: 'Activity', rem: 'Reminder', task: 'Due', step: 'Step' };
+  const stepList = e => e.steps && e.steps.length ? `<span class="evsteps">${e.steps.map(st => `<span class="${st.done || e.done ? 'struck' : ''}">${esc(st.text)}</span>`).join('')}</span>` : '';
   function evRow(e, showDate) {
     return `<button class="ev evb" style="--c:var(--${colOf(e.child)})" data-act="ev" data-v="${e.kind}|${e.id}|${e.date}">
-      <span class="t">${showDate ? `${C.DOW[C.dow(e.date)]}<small>${C.toD(e.date).getDate()} ${C.MON[C.toD(e.date).getMonth()]}</small>` : `${e.time || 'All day'}${e.end ? `<small>${e.end}</small>` : ''}`}</span>
+      <span class="t">${showDate ? `${C.DOW[C.dow(e.date)]}<small>${C.toD(e.date).getDate()} ${C.MON[C.toD(e.date).getMonth()]}</small>` : `${e.time || (e.kind === 'task' || e.kind === 'step' ? 'Due' : 'All day')}${e.end ? `<small>${e.end}</small>` : ''}`}</span>
       <span class="bar"></span>
-      <span class="min0"><span class="ti ${e.skipped ? 'struck' : ''}">${esc(e.title)}</span><span class="sub">${esc(nameOf(e.child))} · ${e.skipped ? 'Skipped this time' : `${showDate && e.time ? e.time + ' · ' : ''}${esc(e.sub)}`}</span></span>
-      <span class="tag ${e.kind}">${KLABEL[e.kind]}</span></button>`;
+      <span class="min0"><span class="ti ${e.skipped || e.done ? 'struck' : ''}">${esc(e.title)}</span><span class="sub">${esc(nameOf(e.child))} · ${e.skipped ? 'Skipped this time' : `${showDate && e.time ? e.time + ' · ' : ''}${esc(e.sub)}${e.done ? ' · done' : ''}`}</span>${stepList(e)}</span>
+      <span class="tag ${e.kind === 'step' ? 'task' : e.kind}">${KLABEL[e.kind]}</span></button>`;
   }
   function schoolLine(s) {
     const sc = S.sc; if (!sc) return '';
@@ -216,11 +218,13 @@
     const live = ev.filter(e => !e.skipped);
     const soon = [];
     for (let i = 1; i <= 7; i++) soon.push(...C.eventsOn(C.addDays(s, i), src(), { visible: all, kinds: new Set(['rem']) }));
+    const overdueN = S.tasks.filter(x => !x.done && x.due < s).length;
     const t = S.sc?.termOf(s);
     const nt = !t && S.sc?.covered(s) ? S.sc.nextTerm(s) : null;
     const digest = !S.children.length ? 'Add your children to get started.'
       : `<b>${live.length ? `${live.length} ${live.length === 1 ? 'thing' : 'things'} on today` : 'Nothing planned today'}</b>${live.length && S.children.length > 1 ? ` across ${new Set(live.map(e => e.child)).size} ${new Set(live.map(e => e.child)).size === 1 ? 'child' : 'children'}` : ''}. `
         + (soon.length ? `${soon.length} reminder${soon.length === 1 ? '' : 's'} in the next week. ` : '')
+        + (overdueN ? `<b class="overdue">${overdueN} overdue task${overdueN === 1 ? '' : 's'}</b>. ` : '')
         + (t ? `School closes ${C.fmtDay(t.end)} (${C.rel(C.diffDays(s, t.end))}).` : nt ? `School opens ${C.fmtDay(nt.start)} (${C.rel(C.diffDays(s, nt.start))}).` : '');
     const backupAge = S.lastBackup ? Math.floor((Date.now() - new Date(S.lastBackup)) / 864e5) : null;
     return `<div class="view">
@@ -233,6 +237,7 @@
             ${ev.length ? ev.map(e => evRow(e)).join('') : `<p class="empty">Nothing planned today.</p>`}
             ${!S.activities.length ? `<div class="nudge"><p class="small">Add weekly activities like hockey practice or music lessons. They repeat every week and pause in school holidays.</p><button class="btn sm pri" data-act="add" data-v="activity">Add an activity</button></div>` : ''}
           </section>
+          ${dueSoonCard()}
           <section class="card"><div class="card-h"><h3>Reminders this week</h3><button class="btn sm" data-act="add" data-v="reminder">Add reminder</button></div>
             ${soon.length ? soon.map(e => evRow(e, true)).join('') : '<p class="empty">No reminders in the next seven days.</p>'}
           </section>
@@ -268,7 +273,8 @@
           ${weeklyList(c.id)}</section>
         <section class="card"><div class="card-h"><h3>Upcoming reminders</h3><button class="btn sm" data-act="add" data-v="reminder" data-child="${c.id}">Add</button></div>
           ${upcomingReminders(c.id)}</section>
-        <section class="card"><div class="card-h"><h3>Homework and projects</h3><span class="pill">Milestone 3</span></div><p class="empty">Open tasks will show here.</p></section>
+        <section class="card"><div class="card-h"><h3>Homework and projects</h3><button class="btn sm" data-act="add" data-v="task" data-child="${c.id}">Add</button></div>
+          ${taskRows(S.tasks.filter(t => t.owner === c.id && !t.done).sort(byDue), true) || '<p class="empty">No open homework or projects.</p>'}</section>
         <section class="card"><div class="card-h"><h3>Exams</h3><span class="pill">Milestone 4</span></div><p class="empty">Upcoming exams will show here.</p></section>
         <section class="card"><div class="card-h"><h3>Money</h3><span class="pill">Milestone 5</span></div><p class="empty">Savings and money owed will show here.</p></section>
       </div></div>`;
@@ -297,6 +303,68 @@
     const list = S.reminders.filter(r => r.owner === childId).map(r => ({ r, d: C.nextReminder(r, s) })).filter(x => x.d && C.diffDays(s, x.d) <= 60).sort((x, y) => x.d.localeCompare(y.d));
     if (!list.length) return '<p class="empty">No reminders in the next two months.</p>';
     return list.map(({ r, d }) => evRow({ kind: 'rem', id: r.id, child: childId, date: d, time: r.time || '', title: r.title, sub: r.repeat && r.repeat !== 'none' ? C.REPEATS.find(x => x[0] === r.repeat)[1] : 'Reminder' }, true)).join('');
+  }
+
+  /* ---------- Tasks (homework and projects) ---------- */
+  const byDue = (a, b) => (a.due || '').localeCompare(b.due || '') || (PRIO[a.priority] ?? 1) - (PRIO[b.priority] ?? 1);
+  const PRIO = { High: 0, Medium: 1, Low: 2 };
+  const PRIOS = ['High', 'Medium', 'Low'];
+  const sid = () => Math.random().toString(36).slice(2, 10);
+  function dueText(t) {
+    const n = C.diffDays(C.today(), t.due);
+    return `due ${C.fmtDay(t.due)} <span class="${n < 0 && !t.done ? 'overdue' : ''}">(${C.rel(n)})</span>`;
+  }
+  function taskRows(list, compact) {
+    return list.map(t => {
+      const open = S.openTask === t.id;
+      const steps = t.steps || [];
+      const sd = steps.filter(x => x.done).length;
+      return `<div class="task" style="--c:var(--${colOf(t.owner)})">
+        <button class="cb" role="checkbox" aria-checked="${!!t.done}" aria-label="Mark ${esc(t.title)} done" data-act="task-done" data-v="${t.id}">${ic('check')}</button>
+        <div class="min0">
+          <button class="ti ${t.done ? 'struck' : ''}" data-act="task-open" data-v="${t.id}" aria-expanded="${open}">${esc(t.title)}</button>
+          <div class="sub">${compact ? '' : esc(nameOf(t.owner)) + ' · '}${t.subject ? esc(t.subject) + ' ' : ''}${esc((t.type || 'Homework').toLowerCase())} · ${dueText(t)}${steps.length ? ` · ${sd}/${steps.length} steps` : ''}${t.notes ? ' · notes' : ''}</div>
+          ${open && t.notes ? `<div class="tnotes">${esc(t.notes)}</div>` : ''}
+          ${open && steps.length ? `<ul class="subs">${steps.map(x => `<li><button class="cb" role="checkbox" aria-checked="${!!x.done}" aria-label="${esc(x.text)}" data-act="step-done" data-v="${t.id}|${x.id}">${ic('check')}</button><span class="${x.done || t.done ? 'struck' : ''}">${esc(x.text)}</span>${x.due ? `<span class="sd ${!x.done && !t.done && x.due < C.today() ? 'overdue' : ''}">${C.fmtDay(x.due)}</span>` : ''}</li>`).join('')}</ul>` : ''}
+        </div>
+        <div class="tside"><span class="tag ${(t.priority || 'Medium').toLowerCase()}">${esc(t.priority || 'Medium')}</span><button class="btn sm" data-act="task-edit" data-v="${t.id}" aria-label="Edit ${esc(t.title)}">Edit</button></div>
+      </div>`;
+    }).join('');
+  }
+  function vTasks() {
+    const f = S.taskFilter;
+    const s = C.today();
+    const vis = visibleSet();
+    const list = S.tasks.filter(t => vis.has(t.owner) && (f === 'all' || (f === 'done') === !!t.done)).sort(byDue);
+    const twoWeeks = C.addDays(C.startOfWeek(s), 13);
+    const groups = f === 'done' ? [['Done', list.slice().reverse()]] : [
+      ['Overdue', list.filter(t => !t.done && t.due < s)],
+      ['This week and next', list.filter(t => !t.done && t.due >= s && t.due <= twoWeeks)],
+      ['Later', list.filter(t => !t.done && t.due > twoWeeks)],
+      ...(f === 'all' ? [['Done', list.filter(t => t.done).reverse()]] : []),
+    ];
+    const shown = groups.filter(g => g[1].length);
+    return `<div class="view">
+      <div class="calbar"><div class="ttl">Homework and projects</div>
+        <div class="seg" role="group">${[['open', 'Open'], ['done', 'Done'], ['all', 'All']].map(([v2, l]) => `<button data-act="tfilter" data-v="${v2}" aria-pressed="${v2 === f}">${l}</button>`).join('')}</div></div>
+      <div class="filters">${toggles()}</div>
+      <div class="stack">${shown.map(([h, ts]) => `<section class="card"><div class="card-h"><h3>${h}</h3><span class="muted" style="font-size:13px">${ts.length}</span></div>${taskRows(ts)}</section>`).join('')
+        || `<section class="card"><p class="empty">${S.tasks.length ? 'No tasks match these filters.' : 'No homework or projects yet.'}</p>${S.tasks.length ? '' : '<button class="btn pri" data-act="add" data-v="task">Add homework or a project</button>'}</section>`}</div>
+    </div>`;
+  }
+  function dueSoonCard() {
+    const s = C.today(), end = C.addDays(s, 3);
+    const overdue = S.tasks.filter(t => !t.done && t.due < s).sort(byDue);
+    const soon = S.tasks.filter(t => !t.done && t.due >= s && t.due <= end).sort(byDue);
+    const steps = [];
+    for (const t of S.tasks) if (!t.done) for (const x of t.steps || []) if (!x.done && x.due && x.due <= end) steps.push({ t, x });
+    if (!overdue.length && !soon.length && !steps.length) return '';
+    const row = (t, label, late) => `<button class="ev evb" style="--c:var(--${colOf(t.owner)})" data-act="ev" data-v="task|${t.id}|${t.due}"><span class="t ${late ? 'overdue' : ''}">${C.DOW[C.dow(t.due)]}<small>${C.toD(t.due).getDate()} ${C.MON[C.toD(t.due).getMonth()]}</small></span><span class="bar"></span><span class="min0"><span class="ti">${esc(t.title)}</span><span class="sub">${esc(nameOf(t.owner))} · ${label}</span></span><span class="tag ${late ? 'high' : 'task'}">${late ? 'Late' : 'Due'}</span></button>`;
+    return `<section class="card"><div class="card-h"><h3>Overdue and due soon</h3><button class="btn sm" data-act="nav" data-v="tasks">All tasks</button></div>
+      ${overdue.map(t => row(t, `<span class="overdue">overdue</span>`, true)).join('')}
+      ${soon.map(t => row(t, `${esc(t.subject || '')} ${esc((t.type || '').toLowerCase())} ${C.rel(C.diffDays(s, t.due))}`, false)).join('')}
+      ${steps.sort((a, b) => a.x.due.localeCompare(b.x.due)).map(({ t, x }) => `<button class="ev evb" style="--c:var(--${colOf(t.owner)})" data-act="ev" data-v="step|${t.id}|${x.due}"><span class="t ${x.due < s ? 'overdue' : ''}">${C.DOW[C.dow(x.due)]}<small>${C.toD(x.due).getDate()} ${C.MON[C.toD(x.due).getMonth()]}</small></span><span class="bar"></span><span class="min0"><span class="ti">${esc(x.text)}</span><span class="sub">${esc(nameOf(t.owner))} · step of ${esc(t.title)}</span></span><span class="tag task">Step</span></button>`).join('')}
+    </section>`;
   }
 
   /* ---------- Calendar ---------- */
@@ -329,7 +397,7 @@
         const lbl = S.sc.offLabel(d);
         return `<div class="day${d === C.today() ? ' today' : ''}${lbl ? ' off' : ''}">
           <div class="dayh"><b>${C.DOW[C.dow(d)]} ${C.toD(d).getDate()}</b>${lbl ? `<span class="offlbl">${esc(lbl)}</span>` : ''}</div>
-          ${ev.length ? ev.map(e => `<button class="mini minib" style="--c:var(--${colOf(e.child)})" data-act="ev" data-v="${e.kind}|${e.id}|${e.date}"><span class="bar"></span><span class="min0"><span class="tm">${e.time || 'All day'}${e.end ? '–' + e.end : ''}</span><span class="${e.skipped ? 'struck' : ''}">${esc(e.title)}</span><span class="sb">${esc(nameOf(e.child))}${e.skipped ? ' · skipped' : e.sub ? ' · ' + esc(e.sub) : ''}</span></span></button>`).join('') : '<p class="empty" style="font-size:13px">Nothing planned</p>'}
+          ${ev.length ? ev.map(e => `<button class="mini minib" style="--c:var(--${colOf(e.child)})" data-act="ev" data-v="${e.kind}|${e.id}|${e.date}"><span class="bar"></span><span class="min0"><span class="tm">${e.time || (e.kind === 'task' || e.kind === 'step' ? (e.kind === 'task' ? 'Due' : 'Step') : 'All day')}${e.end ? '–' + e.end : ''}</span><span class="${e.skipped || e.done ? 'struck' : ''}">${esc(e.title)}</span><span class="sb">${esc(nameOf(e.child))}${e.skipped ? ' · skipped' : e.sub ? ' · ' + esc(e.sub) : ''}</span>${stepList(e)}</span></button>`).join('') : '<p class="empty" style="font-size:13px">Nothing planned</p>'}
         </div>`;
       }).join('')}</div>`;
     } else {
@@ -366,7 +434,7 @@
       </div>
       <div class="filters">${toggles()}${kindToggles()}</div>
       ${noKids ? '<section class="card"><p class="empty">Add a child first.</p></section>' : vis.size && S.kinds.size ? body : '<section class="card"><p class="empty">Switch on at least one child and one item type above to see the schedule.</p></section>'}
-      <div class="legend"><span class="swatch-off"></span>School holiday or day off. Weekly activities pause on these days unless set to run in holidays. Tasks, exams and study join this calendar in milestones 3 and 4.</div>
+      <div class="legend"><span class="swatch-off"></span>School holiday or day off. Weekly activities pause on these days unless set to run in holidays. Exams and study join this calendar in milestone 4.</div>
     </div>`;
   }
 
@@ -488,7 +556,7 @@
   const panel = (title, inner) => `<div class="scrim" data-act="close-bg"><div class="panel" role="dialog" aria-modal="true" aria-labelledby="sh-h"><h2 id="sh-h">${title}</h2>${inner}</div></div>`;
   const childSelect = sel => `<label>Child<select id="f-child">${S.children.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`;
   const delBtn = (sh, what) => `<button type="button" class="btn del${sh.confirm ? ' armed' : ''}" data-act="rec-del">${sh.confirm ? `Tap again to delete ${what}` : 'Delete'}</button>`;
-  const typePills = cur => `<div class="types" role="group" aria-label="What to add">${[['activity', 'Weekly activity'], ['reminder', 'Reminder']].map(([k, l]) => `<button type="button" data-act="add-type" data-v="${k}" aria-pressed="${k === cur}">${l}</button>`).join('')}<button type="button" disabled title="Arrives in milestone 3">Homework · M3</button></div>`;
+  const typePills = cur => `<div class="types" role="group" aria-label="What to add">${[['task', 'Homework or project'], ['activity', 'Weekly activity'], ['reminder', 'Reminder']].map(([k, l]) => `<button type="button" data-act="add-type" data-v="${k}" aria-pressed="${k === cur}">${l}</button>`).join('')}</div>`;
   const defaultDate = () => (S.view === 'calendar' ? (S.cal.mode === 'month' ? S.cal.sel : (S.cal.cursor >= C.today() ? S.cal.cursor : C.today())) : C.today());
 
   function activitySheet() {
@@ -545,6 +613,44 @@
       </div>`);
   }
 
+  let stepN = 0;
+  const stepRow = x => { const n = ++stepN; return `<div class="steprow" data-id="${esc(x?.id || '')}" data-done="${x?.done ? 1 : 0}"><input id="st-t-${n}" class="st-t" placeholder="Step, e.g. Print photos" aria-label="Step" value="${esc(x?.text || '')}" autocomplete="off"><input id="st-due-${n}" class="st-due" type="date" aria-label="Step due date (optional)" value="${x?.due || ''}"><button type="button" class="rm" data-act="step-rm" aria-label="Remove step">×</button></div>`; };
+  function taskSheet() {
+    const sh = S.sheet;
+    const t = sh.id ? S.tasks.find(x => x.id === sh.id) : null;
+    const opt = (list, cur) => list.map(o => `<option ${o === cur ? 'selected' : ''}>${o}</option>`).join('');
+    return panel(t ? `Edit ${esc(t.title)}` : 'Add', `${t ? '' : typePills('task')}
+      <form class="form" data-form="task" style="margin-top:${t ? 14 : 0}px">
+        ${childSelect(t ? t.owner : sh.child)}
+        <label>Type<select id="f-kind">${opt(['Homework', 'Project'], t?.type || 'Homework')}</select></label>
+        <label class="full">Title<input id="f-title" value="${esc(t?.title || '')}" placeholder="e.g. Book report" autocomplete="off"></label>
+        <label>Subject<input id="f-subject" value="${esc(t?.subject || '')}" placeholder="e.g. English" autocomplete="off"></label>
+        <label>Due<input id="f-date" type="date" value="${t?.due || C.addDays(defaultDate(), 3)}"></label>
+        <label>Priority<select id="f-prio">${opt(PRIOS, t?.priority || 'Medium')}</select></label>
+        <label class="full">Notes (optional)<textarea id="f-notes" rows="3" placeholder="e.g. A3 size, at least six labelled photos">${esc(t?.notes || '')}</textarea></label>
+        <div class="full fieldset"><span class="flbl">Steps (optional)</span><div class="steps" id="f-steps">${(t?.steps || []).map(stepRow).join('')}</div>
+          <button type="button" class="btn sm addstep" data-act="step-add">${ic('plus')}Add step</button>
+          <span class="hint">Each step can have its own due date. Dated steps show on the calendar; the others show with the task.</span></div>
+        <div class="err full" id="f-err" role="alert"></div>
+        <div class="actions full">${t ? delBtn(sh, 'this task') : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${t ? 'Save' : 'Add'}</button></div>
+      </form>`);
+  }
+  function taskViewSheet() {
+    const sh = S.sheet;
+    const t = S.tasks.find(x => x.id === sh.id);
+    if (!t) return panel('Not found', '<p class="small" style="margin:12px 0">This task was removed.</p><div class="actions"><button class="btn" data-act="close">Close</button></div>');
+    const steps = t.steps || [];
+    return panel(esc(t.title), `
+      <div class="evhead">${avatar(kidOf(t.owner) || { name: '?', colour: 'c1' })}<span class="min0"><b>${esc(nameOf(t.owner))}</b> · ${esc(t.subject ? t.subject + ' ' : '')}${esc((t.type || 'Homework').toLowerCase())}<span class="meta" style="display:block">${dueText(t)} · ${esc(t.priority || 'Medium')} priority${t.done ? ' · done' : ''}</span></span></div>
+      ${t.notes ? `<div class="tnotes">${esc(t.notes)}</div>` : ''}
+      ${steps.length ? `<ul class="subs" style="margin-top:8px">${steps.map(x => `<li style="--c:var(--${colOf(t.owner)})"><button class="cb" role="checkbox" aria-checked="${!!x.done}" aria-label="${esc(x.text)}" data-act="step-done" data-v="${t.id}|${x.id}">${ic('check')}</button><span class="${x.done || t.done ? 'struck' : ''}">${esc(x.text)}</span>${x.due ? `<span class="sd">${C.fmtDay(x.due)}</span>` : ''}</li>`).join('')}</ul>` : ''}
+      <div class="actions" style="justify-content:flex-start;margin-top:14px">
+        <button class="btn pri" data-act="task-done" data-v="${t.id}">${t.done ? 'Mark not done' : 'Mark done'}</button>
+        <button class="btn" data-act="task-edit" data-v="${t.id}">Edit</button>
+        <button class="btn" data-act="close">Close</button>
+      </div>`);
+  }
+
   function termSheet() {
     const sh = S.sheet;
     const t = sh.id ? S.terms.find(x => x.id === sh.id) : null;
@@ -588,8 +694,8 @@
       app.innerHTML = vSetup(); renderSheet(); return;
     }
     const v = S.view;
-    const content = v === 'today' ? vToday() : v === 'calendar' ? vCalendar() : v === 'settings' ? vSettings() : v === 'child' ? vChild(S.child) : COMING[v] ? vComing(v) : vToday();
-    const fab = ['today', 'calendar', 'child'].includes(v) && S.children.length;
+    const content = v === 'today' ? vToday() : v === 'calendar' ? vCalendar() : v === 'tasks' ? vTasks() : v === 'settings' ? vSettings() : v === 'child' ? vChild(S.child) : COMING[v] ? vComing(v) : vToday();
+    const fab = ['today', 'calendar', 'child', 'tasks'].includes(v) && S.children.length;
     const title = v === 'child' ? (S.children.find(c => c.id === S.child)?.name || 'Child') : TITLES[v] || 'Family Hub';
     const cur = k => (v === k ? 'aria-current="page"' : '');
     app.innerHTML = `<div class="shell">
@@ -607,7 +713,7 @@
         ${content}
       </main>
       <nav class="tabbar" aria-label="Main">${NAV.map(([k, l]) => `<button data-act="nav" data-v="${k}" ${cur(k)}>${ic(k)}${l}</button>`).join('')}</nav>
-      ${fab ? `<button class="fab" data-act="add" data-v="${S.lastAdd || 'activity'}"${v === 'child' ? ` data-child="${S.child}"` : ''}>${ic('plus')}Add</button>` : ''}
+      ${fab ? `<button class="fab" data-act="add" data-v="${v === 'tasks' ? 'task' : S.lastAdd || 'activity'}"${v === 'child' ? ` data-child="${S.child}"` : ''}>${ic('plus')}Add</button>` : ''}
     </div>${restoreInput()}`;
     renderSheet();
   }
@@ -616,7 +722,7 @@
     if (!S.sheet) { el.hidden = true; el.innerHTML = ''; return; }
     const k = S.sheet.kind;
     el.innerHTML = k === 'child' ? childSheet() : k === 'restore' ? restoreSheet() : k === 'activity' ? activitySheet()
-      : k === 'reminder' ? reminderSheet() : k === 'event' ? eventSheet() : k === 'term' ? termSheet() : dayoffSheet();
+      : k === 'reminder' ? reminderSheet() : k === 'event' ? eventSheet() : k === 'task' ? taskSheet() : k === 'taskview' ? taskViewSheet() : k === 'term' ? termSheet() : dayoffSheet();
     el.hidden = false;
   }
 
@@ -691,6 +797,30 @@
     toast(`${title} ${sh.id ? 'updated' : 'added'} for ${C.fmtDay(date)}.`);
     return true;
   }
+  async function saveTask() {
+    const sh = S.sheet;
+    const old = sh.id ? S.tasks.find(x => x.id === sh.id) : null;
+    const title = val('#f-title'), due = val('#f-date');
+    if (!title) return fail('Give the task a title, for example Book report.');
+    if (!C.isDate(due)) return fail('Choose the due date.');
+    const steps = [];
+    for (const r of document.querySelectorAll('#f-steps .steprow')) {
+      const text = r.querySelector('.st-t').value.trim(), sdue = r.querySelector('.st-due').value;
+      if (!text) continue;
+      if (sdue && !C.isDate(sdue)) return fail(`The date for the step "${text}" is not a valid date.`);
+      if (sdue && sdue > due) return fail(`The step "${text}" is due after the task itself (${C.fmtDay(due)}). Move the step's date or the task's due date.`);
+      steps.push({ id: r.dataset.id || sid(), text, due: sdue, done: r.dataset.done === '1' });
+    }
+    const rec = { owner: val('#f-child'), type: val('#f-kind'), title, subject: val('#f-subject'), due, priority: val('#f-prio'), notes: ($('#f-notes')?.value || '').trim(), steps };
+    if (old) rec.id = old.id; else rec.done = false;
+    const saved = await data.save('tasks', rec);
+    S.sheet = null; S.lastAdd = 'task'; S.openTask = saved.id; await load();
+    if (S.view === 'calendar') { S.cal.cursor = due; S.cal.sel = due; }
+    render();
+    toast(`${title} ${old ? 'updated' : `added for ${nameOf(rec.owner)}`}, due ${C.fmtDay(due)}.`);
+    return true;
+  }
+
   async function saveTerm() {
     const sh = S.sheet;
     const name = val('#f-title'), start = val('#f-start'), end = val('#f-end');
@@ -831,6 +961,7 @@
           const name = S.children.find(c => c.id === sh.id)?.name;
           for (const x of S.activities.filter(r => r.owner === sh.id)) await data.remove('activities', x.id);
           for (const x of S.reminders.filter(r => r.owner === sh.id)) await data.remove('reminders', x.id);
+          for (const x of S.tasks.filter(r => r.owner === sh.id)) await data.remove('tasks', x.id);
           await data.remove('people', sh.id);
           S.sheet = null; await load();
           if (S.view === 'child' && S.child === sh.id) go('today'); else render();
@@ -873,7 +1004,33 @@
           return;
         }
         case 'day-toggle': b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); return;
-        case 'ev': { const [k, id, date] = v.split('|'); S.sheet = { kind: 'event', ekind: k, id, date }; renderSheet(); return; }
+        case 'ev': {
+          const [k, id, date] = v.split('|');
+          S.sheet = k === 'task' || k === 'step' ? { kind: 'taskview', id } : { kind: 'event', ekind: k, id, date };
+          renderSheet(); return;
+        }
+        /* tasks */
+        case 'tfilter': S.taskFilter = v; render(); return;
+        case 'task-open': S.openTask = S.openTask === v ? null : v; render(); return;
+        case 'task-edit': S.sheet = { kind: 'task', id: v }; renderSheet(); return;
+        case 'task-done': {
+          const t = S.tasks.find(x => x.id === v);
+          await data.save('tasks', { id: t.id, done: !t.done, doneAt: t.done ? '' : new Date().toISOString() });
+          await load(); render(); renderSheet();
+          toast(t.done ? `${t.title} is open again.` : `${t.title} marked done.`);
+          return;
+        }
+        case 'step-done': {
+          const [tid, stid] = v.split('|');
+          const t = S.tasks.find(x => x.id === tid);
+          const steps = (t.steps || []).map(x => x.id === stid ? { ...x, done: !x.done } : x);
+          await data.save('tasks', { id: t.id, steps });
+          await load(); render(); renderSheet();
+          if (steps.length && steps.every(x => x.done) && !t.done) toast(`All steps of ${t.title} are done. Tick the task when it's handed in.`);
+          return;
+        }
+        case 'step-add': { const box = $('#f-steps'); box.insertAdjacentHTML('beforeend', stepRow(null)); box.lastElementChild.querySelector('.st-t').focus(); return; }
+        case 'step-rm': b.closest('.steprow').remove(); return;
         case 'ev-skip': {
           const sh = S.sheet;
           const store = sh.ekind === 'act' ? 'activities' : 'reminders';
@@ -909,8 +1066,8 @@
         case 'rec-del': {
           const sh = S.sheet;
           if (!sh.confirm) { sh.confirm = true; b.classList.add('armed'); b.textContent = 'Tap again to delete'; return; }
-          const store = { activity: 'activities', reminder: 'reminders', term: 'terms', dayoff: 'daysoff' }[sh.kind];
-          const list = { activity: S.activities, reminder: S.reminders, term: S.terms, dayoff: S.daysoff }[sh.kind];
+          const store = { activity: 'activities', reminder: 'reminders', term: 'terms', dayoff: 'daysoff', task: 'tasks' }[sh.kind];
+          const list = { activity: S.activities, reminder: S.reminders, term: S.terms, dayoff: S.daysoff, task: S.tasks }[sh.kind];
           const rec = list.find(x => x.id === sh.id);
           await data.remove(store, sh.id);
           S.sheet = null; await load(); render();
@@ -931,6 +1088,7 @@
     const f = ev.target.dataset.form;
     try {
       if (f === 'child') await saveChild();
+      if (f === 'task') await saveTask();
       if (f === 'activity') await saveActivity();
       if (f === 'reminder') await saveReminder();
       if (f === 'term') await saveTerm();

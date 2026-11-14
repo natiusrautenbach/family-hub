@@ -347,3 +347,15 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .evhead{display:flex;gap:10px;align-items:center;margin-top:10px}
 .btn.del.armed{background:var(--bad);color:var(--surface);border-color:var(--bad)}
 .set .pill{margin-left:4px}
+
+/* ---------- Milestone 3 ---------- */
+.tag.task{background:color-mix(in srgb,var(--warn) 15%,transparent);color:var(--warn)}
+.tag.low{background:var(--sunk);color:var(--muted)}
+.evsteps{display:grid;gap:2px;margin-top:4px;font-size:12.5px;color:var(--muted)}
+.evsteps > span{display:block}
+.evsteps > span::before{content:"\25E6\00a0"}
+.task .ti{display:block;color:inherit;font:inherit;font-weight:600;cursor:pointer}
+.task .cb{color:var(--surface)}
+.subs li .cb{flex:none}
+.tside .btn{font-size:12px}
+.calbar .seg{flex:none}
