@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<!-- Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. -->
+<html lang="en-ZA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Family Hub</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="copyright" content="Copyright (c) 2026 Natius. All rights reserved.">
+<meta name="description" content="Family organiser for children's activities, study plans, homework and money. Data stays on this device.">
+<meta name="theme-color" content="#1f3a68" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1218" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Family Hub">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="css/app.css">
+<style>
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{margin:0;min-height:100%}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div id="app"><p style="padding:40px 16px;text-align:center">Opening Family Hub…</p></div>
+<div id="sheet" hidden></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<noscript><p style="padding:16px">Family Hub needs JavaScript switched on.</p></noscript>
+<script src="js/db.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
