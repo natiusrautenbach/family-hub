@@ -8,7 +8,7 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '0.3.0';
+  const VERSION = '0.3.1';
   const MILESTONE = 3;
 
   /* ---------- Small helpers ---------- */
@@ -190,13 +190,14 @@
   /* ---------- Events (activities and reminders) ---------- */
   const src = () => ({ activities: S.activities, reminders: S.reminders, tasks: S.tasks, sc: S.sc });
   const KLABEL = { act: 'Activity', rem: 'Reminder', task: 'Due', step: 'Step' };
+  /* Category label shown on every calendar item, with the subject where there is one. */
+  const ctag = e => `<span class="ctag">${esc(e.cat || KLABEL[e.kind] || '')}${e.subject ? ' · ' + esc(e.subject) : ''}</span>`;
   const stepList = e => e.steps && e.steps.length ? `<span class="evsteps">${e.steps.map(st => `<span class="${st.done || e.done ? 'struck' : ''}">${esc(st.text)}</span>`).join('')}</span>` : '';
   function evRow(e, showDate) {
     return `<button class="ev evb" style="--c:var(--${colOf(e.child)})" data-act="ev" data-v="${e.kind}|${e.id}|${e.date}">
       <span class="t">${showDate ? `${C.DOW[C.dow(e.date)]}<small>${C.toD(e.date).getDate()} ${C.MON[C.toD(e.date).getMonth()]}</small>` : `${e.time || (e.kind === 'task' || e.kind === 'step' ? 'Due' : 'All day')}${e.end ? `<small>${e.end}</small>` : ''}`}</span>
       <span class="bar"></span>
-      <span class="min0"><span class="ti ${e.skipped || e.done ? 'struck' : ''}">${esc(e.title)}</span><span class="sub">${esc(nameOf(e.child))} · ${e.skipped ? 'Skipped this time' : `${showDate && e.time ? e.time + ' · ' : ''}${esc(e.sub)}${e.done ? ' · done' : ''}`}</span>${stepList(e)}</span>
-      <span class="tag ${e.kind === 'step' ? 'task' : e.kind}">${KLABEL[e.kind]}</span></button>`;
+      <span class="min0"><span class="ti ${e.skipped || e.done ? 'struck' : ''}">${esc(e.title)}</span><span class="sub">${ctag(e)} ${esc(nameOf(e.child))}${e.skipped ? ' · skipped this time' : `${showDate && e.time ? ' · ' + e.time : ''}${e.detail ? ' · ' + esc(e.detail) : ''}${e.done ? ' · done' : ''}`}</span>${stepList(e)}</span></button>`;
   }
   function schoolLine(s) {
     const sc = S.sc; if (!sc) return '';
@@ -302,7 +303,7 @@
     const s = C.today();
     const list = S.reminders.filter(r => r.owner === childId).map(r => ({ r, d: C.nextReminder(r, s) })).filter(x => x.d && C.diffDays(s, x.d) <= 60).sort((x, y) => x.d.localeCompare(y.d));
     if (!list.length) return '<p class="empty">No reminders in the next two months.</p>';
-    return list.map(({ r, d }) => evRow({ kind: 'rem', id: r.id, child: childId, date: d, time: r.time || '', title: r.title, sub: r.repeat && r.repeat !== 'none' ? C.REPEATS.find(x => x[0] === r.repeat)[1] : 'Reminder' }, true)).join('');
+    return list.map(({ r, d }) => evRow({ kind: 'rem', id: r.id, child: childId, date: d, time: r.time || '', title: r.title, cat: 'Reminder', subject: '', detail: r.repeat && r.repeat !== 'none' ? C.REPEATS.find(x => x[0] === r.repeat)[1] : '' }, true)).join('');
   }
 
   /* ---------- Tasks (homework and projects) ---------- */
@@ -331,24 +332,46 @@
       </div>`;
     }).join('');
   }
+  /* A step listed on its own in the Tasks screen, under the week it is due. */
+  function stepItemRow(t, x) {
+    const n = C.diffDays(C.today(), x.due);
+    return `<div class="task stepitem" style="--c:var(--${colOf(t.owner)})">
+      <button class="cb" role="checkbox" aria-checked="${!!x.done}" aria-label="Mark step ${esc(x.text)} done" data-act="step-done" data-v="${t.id}|${x.id}">${ic('check')}</button>
+      <div class="min0">
+        <button class="ti" data-act="ev" data-v="step|${t.id}|${x.due}">${esc(x.text)}</button>
+        <div class="sub"><span class="ctag">Step${t.subject ? ' · ' + esc(t.subject) : ''}</span> ${esc(nameOf(t.owner))} · of ${esc(t.title)} · due ${C.fmtDay(x.due)} <span class="${n < 0 ? 'overdue' : ''}">(${C.rel(n)})</span></div>
+      </div>
+      <div class="tside"><span class="tag step">Step</span><button class="btn sm" data-act="task-edit" data-v="${t.id}" aria-label="Edit ${esc(t.title)}">Edit</button></div>
+    </div>`;
+  }
   function vTasks() {
     const f = S.taskFilter;
     const s = C.today();
     const vis = visibleSet();
     const list = S.tasks.filter(t => vis.has(t.owner) && (f === 'all' || (f === 'done') === !!t.done)).sort(byDue);
-    const twoWeeks = C.addDays(C.startOfWeek(s), 13);
-    const groups = f === 'done' ? [['Done', list.slice().reverse()]] : [
-      ['Overdue', list.filter(t => !t.done && t.due < s)],
-      ['This week and next', list.filter(t => !t.done && t.due >= s && t.due <= twoWeeks)],
-      ['Later', list.filter(t => !t.done && t.due > twoWeeks)],
-      ...(f === 'all' ? [['Done', list.filter(t => t.done).reverse()]] : []),
+    /* Weeks run Monday to Sunday. Open steps with their own date are listed in the
+       group for that date, as well as under their task. */
+    const weekEnd = C.addDays(C.startOfWeek(s), 6), nextEnd = C.addDays(weekEnd, 7);
+    const bucket = d => d < s ? 'over' : d <= weekEnd ? 'this' : d <= nextEnd ? 'next' : 'later';
+    const items = [];
+    for (const t of list.filter(x => !x.done)) {
+      items.push({ due: t.due, task: t });
+      for (const x of t.steps || []) if (x.due && !x.done) items.push({ due: x.due, task: t, step: x });
+    }
+    const pick = k => items.filter(it => bucket(it.due) === k).sort((p, q) => p.due.localeCompare(q.due) || (p.step ? 0 : 1) - (q.step ? 0 : 1));
+    const groups = f === 'done' ? [['Done', list.slice().reverse().map(t => ({ task: t }))]] : [
+      ['Overdue', pick('over')],
+      [`This week · until ${C.fmtDay(weekEnd)}`, pick('this')],
+      [`Next week · ${C.fmtDay(C.addDays(weekEnd, 1))} – ${C.fmtDay(nextEnd)}`, pick('next')],
+      ['Later', pick('later')],
+      ...(f === 'all' ? [['Done', list.filter(t => t.done).reverse().map(t => ({ task: t }))]] : []),
     ];
-    const shown = groups.filter(g => g[1].length);
+    const shown = groups.filter(g => g[1].length).map(([h, its]) => [h, its, its.filter(i => !i.step).length, its.filter(i => i.step).length]);
     return `<div class="view">
       <div class="calbar"><div class="ttl">Homework and projects</div>
         <div class="seg" role="group">${[['open', 'Open'], ['done', 'Done'], ['all', 'All']].map(([v2, l]) => `<button data-act="tfilter" data-v="${v2}" aria-pressed="${v2 === f}">${l}</button>`).join('')}</div></div>
       <div class="filters">${toggles()}</div>
-      <div class="stack">${shown.map(([h, ts]) => `<section class="card"><div class="card-h"><h3>${h}</h3><span class="muted" style="font-size:13px">${ts.length}</span></div>${taskRows(ts)}</section>`).join('')
+      <div class="stack">${shown.map(([h, its, nT, nS]) => `<section class="card"><div class="card-h"><h3>${h}</h3><span class="muted" style="font-size:13px">${[nT ? `${nT} ${nT === 1 ? 'task' : 'tasks'}` : '', nS ? `${nS} ${nS === 1 ? 'step' : 'steps'}` : ''].filter(Boolean).join(' · ')}</span></div>${its.map(it => it.step ? stepItemRow(it.task, it.step) : taskRows([it.task])).join('')}</section>`).join('')
         || `<section class="card"><p class="empty">${S.tasks.length ? 'No tasks match these filters.' : 'No homework or projects yet.'}</p>${S.tasks.length ? '' : '<button class="btn pri" data-act="add" data-v="task">Add homework or a project</button>'}</section>`}</div>
     </div>`;
   }
@@ -397,7 +420,7 @@
         const lbl = S.sc.offLabel(d);
         return `<div class="day${d === C.today() ? ' today' : ''}${lbl ? ' off' : ''}">
           <div class="dayh"><b>${C.DOW[C.dow(d)]} ${C.toD(d).getDate()}</b>${lbl ? `<span class="offlbl">${esc(lbl)}</span>` : ''}</div>
-          ${ev.length ? ev.map(e => `<button class="mini minib" style="--c:var(--${colOf(e.child)})" data-act="ev" data-v="${e.kind}|${e.id}|${e.date}"><span class="bar"></span><span class="min0"><span class="tm">${e.time || (e.kind === 'task' || e.kind === 'step' ? (e.kind === 'task' ? 'Due' : 'Step') : 'All day')}${e.end ? '–' + e.end : ''}</span><span class="${e.skipped || e.done ? 'struck' : ''}">${esc(e.title)}</span><span class="sb">${esc(nameOf(e.child))}${e.skipped ? ' · skipped' : e.sub ? ' · ' + esc(e.sub) : ''}</span>${stepList(e)}</span></button>`).join('') : '<p class="empty" style="font-size:13px">Nothing planned</p>'}
+          ${ev.length ? ev.map(e => `<button class="mini minib" style="--c:var(--${colOf(e.child)})" data-act="ev" data-v="${e.kind}|${e.id}|${e.date}"><span class="bar"></span><span class="min0"><span class="tm">${e.time || (e.kind === 'task' || e.kind === 'step' ? (e.kind === 'task' ? 'Due' : 'Step') : 'All day')}${e.end ? '–' + e.end : ''}</span><span class="${e.skipped || e.done ? 'struck' : ''}">${esc(e.title)}</span><span class="sb">${ctag(e)} ${esc(nameOf(e.child))}${e.skipped ? ' · skipped' : e.detail ? ' · ' + esc(e.detail) : ''}</span>${stepList(e)}</span></button>`).join('') : '<p class="empty" style="font-size:13px">Nothing planned</p>'}
         </div>`;
       }).join('')}</div>`;
     } else {
@@ -418,7 +441,7 @@
             <span class="n">${C.toD(d).getDate()}</span>
             ${showLbl ? `<span class="mlbl">${esc(lbl)}</span>` : ''}
             <span class="dots">${ev.slice(0, 6).map(e => `<i style="--c:var(--${colOf(e.child)})"></i>`).join('')}</span>
-            ${ev.slice(0, 3).map(e => `<span class="mtxt" style="--c:var(--${colOf(e.child)})">${e.time ? e.time + ' ' : ''}${esc(e.title)}</span>`).join('')}
+            ${ev.slice(0, 3).map(e => `<span class="mtxt" style="--c:var(--${colOf(e.child)})" title="${esc((e.cat || '') + (e.subject ? ' · ' + e.subject : '') + ': ' + e.title)}"><span class="mcat">${esc(e.cat || '')}</span> ${e.time ? e.time + ' ' : ''}${esc(e.title)}</span>`).join('')}
             ${ev.length > 3 ? `<span class="more mtxt" style="border:0;padding:0">+${ev.length - 3} more</span>` : ''}
           </button>`;
         }).join('')}</div>

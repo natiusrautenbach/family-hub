@@ -119,17 +119,17 @@
     for (const a of src.activities) {
       const st = activityOn(a, s, src.sc);
       if (!st || st === 'holiday') continue;
-      out.push({ kind: 'act', id: a.id, child: a.owner, date: s, time: a.start || '', end: a.end || '', title: a.title, sub: a.place || '', skipped: st === 'skipped' });
+      out.push({ kind: 'act', id: a.id, child: a.owner, date: s, time: a.start || '', end: a.end || '', title: a.title, cat: 'Activity', subject: '', detail: a.place || '', skipped: st === 'skipped' });
     }
     for (const r of src.reminders) {
       if (!reminderOn(r, s)) continue;
-      out.push({ kind: 'rem', id: r.id, child: r.owner, date: s, time: r.time || '', end: '', title: r.title, sub: r.repeat && r.repeat !== 'none' ? REPEATS.find(x => x[0] === r.repeat)[1] : 'Reminder', skipped: false });
+      out.push({ kind: 'rem', id: r.id, child: r.owner, date: s, time: r.time || '', end: '', title: r.title, cat: 'Reminder', subject: '', detail: r.repeat && r.repeat !== 'none' ? REPEATS.find(x => x[0] === r.repeat)[1] : '', skipped: false });
     }
     /* Tasks show on their due date with their undated steps; a step with its own date shows on that day. */
     for (const t of src.tasks || []) {
-      if (t.due === s) out.push({ kind: 'task', id: t.id, child: t.owner, date: s, time: '', end: '', title: t.title, sub: `${t.subject ? t.subject + ' ' : ''}${(t.type || 'task').toLowerCase()} due`, done: !!t.done, skipped: false, steps: (t.steps || []).filter(st => !st.due) });
+      if (t.due === s) out.push({ kind: 'task', id: t.id, child: t.owner, date: s, time: '', end: '', title: t.title, cat: t.type || 'Homework', subject: t.subject || '', detail: '', done: !!t.done, skipped: false, steps: (t.steps || []).filter(st => !st.due) });
       for (const st of t.steps || []) {
-        if (st.due === s) out.push({ kind: 'step', id: t.id, stepId: st.id, child: t.owner, date: s, time: '', end: '', title: st.text, sub: `Step of ${t.title}`, done: !!(st.done || t.done), skipped: false });
+        if (st.due === s) out.push({ kind: 'step', id: t.id, stepId: st.id, child: t.owner, date: s, time: '', end: '', title: st.text, cat: 'Step', subject: `${t.subject ? t.subject + ' ' : ''}${(t.type || 'Homework').toLowerCase()}`, detail: `of ${t.title}`, done: !!(st.done || t.done), skipped: false });
       }
     }
     return out

@@ -359,3 +359,10 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .subs li .cb{flex:none}
 .tside .btn{font-size:12px}
 .calbar .seg{flex:none}
+
+/* ---------- Update 3.1: category labels, steps by week ---------- */
+.ctag{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:1px 7px;border-radius:999px;background:color-mix(in srgb,var(--c) 14%,var(--surface));color:var(--ink);margin-right:2px;vertical-align:1px;white-space:nowrap}
+.mcat{font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.tag.step{background:var(--sunk);color:var(--muted)}
+.stepitem{background:color-mix(in srgb,var(--sunk) 55%,transparent);margin:0 -16px;padding-left:16px;padding-right:16px}
+.stepitem .cb{width:20px;height:20px;border-radius:6px;margin-left:2px}
