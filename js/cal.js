@@ -23,6 +23,7 @@
   const fmtLong = s => { const d = toD(s); return `${DOWL[d.getDay()]} ${d.getDate()} ${MONL[d.getMonth()]}`; };
   const rel = n => n === 0 ? 'today' : n === 1 ? 'tomorrow' : n === -1 ? 'yesterday' : n > 0 ? `in ${n} days` : `${-n} days ago`;
   const isDate = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && toS(toD(s)) === s;
+  const addMin = (t, m) => { const [h, mi] = t.split(':').map(Number); const x = Math.min(h * 60 + mi + m, 23 * 60 + 59); return `${pad(Math.floor(x / 60))}:${pad(x % 60)}`; };
   const isTime = s => typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
 
   /* ---------- Official school calendar ----------
@@ -132,6 +133,13 @@
         if (st.due === s) out.push({ kind: 'step', id: t.id, stepId: st.id, child: t.owner, date: s, time: '', end: '', title: st.text, cat: 'Step', subject: `${t.subject ? t.subject + ' ' : ''}${(t.type || 'Homework').toLowerCase()}`, detail: `of ${t.title}`, done: !!(st.done || t.done), skipped: false });
       }
     }
+    /* Exams and revision sessions. */
+    for (const x of src.exams || []) {
+      if (x.date === s) out.push({ kind: 'exam', id: x.id, child: x.owner, date: s, time: x.time || '', end: '', title: `${x.subject}${x.paper ? ' ' + x.paper : ''}`, cat: 'Exam', subject: '', detail: '', skipped: false });
+    }
+    for (const x of src.sessions || []) {
+      if (x.date === s) out.push({ kind: 'study', id: x.id, child: x.owner, date: s, time: x.time || '', end: x.time && x.mins ? addMin(x.time, x.mins) : '', title: x.subject, cat: 'Study', subject: '', detail: `${x.label}${x.mins ? `, ${x.mins} min` : ''}`, done: !!x.done, skipped: false });
+    }
     return out
       .filter(e => !o.visible || o.visible.has(e.child))
       .filter(e => !o.kinds || o.kinds.has(GROUP[e.kind]))
@@ -139,10 +147,10 @@
   }
 
   /* Which Show filter each kind of calendar item belongs to. */
-  const GROUP = { act: 'act', rem: 'rem', task: 'task', step: 'task' };
+  const GROUP = { act: 'act', rem: 'rem', task: 'task', step: 'task', exam: 'study', study: 'study' };
 
   FH.cal = {
-    pad, toD, toS, today, addDays, dow, diffDays, startOfWeek, isDate, isTime,
+    pad, toD, toS, today, addDays, dow, diffDays, startOfWeek, isDate, isTime, addMin,
     DOW, DOWL, MON, MONL, fmtDay, fmtDate, fmtLong, rel,
     OFFICIAL, schoolCalendar, activityOn, reminderOn, nextReminder, eventsOn, REPEATS,
   };

@@ -366,3 +366,31 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .tag.step{background:var(--sunk);color:var(--muted)}
 .stepitem{background:color-mix(in srgb,var(--sunk) 55%,transparent);margin:0 -16px;padding-left:16px;padding-right:16px}
 .stepitem .cb{width:20px;height:20px;border-radius:6px;margin-left:2px}
+
+/* ---------- Milestone 4: study planner ---------- */
+.phead2{border-left:4px solid var(--c)}
+.phead2 .solo-h{margin:2px 0 4px}
+.sess{grid-template-columns:26px 48px minmax(0,1fr)}
+.stime{font-weight:700;font-size:13px}
+.slink{background:none;border:0;padding:0;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.pastsess{margin-top:12px;font-size:14px}
+.pastsess summary,.photoref summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13.5px}
+.photoref img{display:block;max-height:360px;margin-top:8px;border-radius:8px;border:1px solid var(--line)}
+.photoref pre{white-space:pre-wrap;font-size:12px;background:var(--sunk);padding:10px;border-radius:8px;max-height:240px;overflow:auto}
+table.imp{min-width:560px}
+table.imp input{padding:6px 8px}
+table.imp .rm{width:32px;height:32px}
+label.btn.disabled{opacity:.5;pointer-events:none}
+.ev .countdown{align-self:center}
+.tag.exam{background:color-mix(in srgb,var(--bad) 13%,transparent);color:var(--bad)}
+@media (max-width:560px){
+  table.imp{min-width:0}
+  table.imp thead{display:none}
+  table.imp,table.imp tbody{display:block}
+  table.imp tr{display:grid;grid-template-columns:56px minmax(0,1fr) 88px 32px;gap:6px;padding:10px 0;border-top:1px solid var(--line)}
+  table.imp td{display:block;padding:0;border:0;width:auto!important;min-width:0}
+  table.imp td:first-child{grid-column:1 / -1}
+  table.imp tr.flag{background:color-mix(in srgb,var(--warn) 10%,transparent);margin:0 -8px;padding:10px 8px}
+  table.imp tr.flag td{background:none}
+}
+@media (max-width:560px){table.imp input{padding:6px 5px;font-size:14px}table.imp .rm{width:32px;height:34px}}

@@ -1,15 +1,15 @@
 /* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Family Hub · app (beta, milestone 3)
+/* Family Hub · app (beta, milestone 4)
    Screens: first-time setup, Today, Calendar (activities, reminders, school
-   terms, tasks), Tasks (homework and projects), child pages, Settings.
-   Study and Money arrive in milestones 4 to 6 and show what is coming until then. */
+   terms, tasks, exams, study), Tasks, Study planner, child pages, Settings.
+   Money arrives in milestones 5 and 6 and shows what is coming until then. */
 (function () {
   'use strict';
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '0.3.1';
-  const MILESTONE = 3;
+  const VERSION = '0.4.0';
+  const MILESTONE = 4;
 
   /* ---------- Small helpers ---------- */
   const $ = s => document.querySelector(s);
@@ -41,7 +41,6 @@
     [7, 'Today and hand-over', 'Daily digest, child pages, install guide'],
   ];
   const COMING = {
-    study: { m: 4, title: 'Study planner', text: 'Photograph an exam timetable, check what was read, and get a revision plan you can adjust and tick off.' },
     money: { m: 5, title: 'Money', text: 'Bank balances with history, savings goals shared by percentage, and money owed each way. Chores and reward goals follow in milestone 6.' },
   };
 
@@ -58,12 +57,13 @@
     /* milestone 2 */
     activities: [], reminders: [], terms: [], daysoff: [], sc: null,
     hidden: new Set(),                      // children switched off on the calendar
-    kinds: new Set(['act', 'rem', 'task']), // item types shown on the calendar
+    kinds: new Set(['act', 'rem', 'task', 'study']), // item types shown on the calendar
     tasks: [], taskFilter: 'open', openTask: null,
+    periods: [], exams: [], sessions: [], study: { period: null, tab: 'exams', imp: null },
     cal: { mode: 'week', cursor: C.today(), sel: C.today() },
     pastTerms: false,
   };
-  const KINDS = [['act', 'Activities'], ['rem', 'Reminders'], ['task', 'Tasks']];
+  const KINDS = [['act', 'Activities'], ['rem', 'Reminders'], ['task', 'Tasks'], ['study', 'Exams and study']];
   try {
     const saved = JSON.parse(localStorage.getItem('fh-cal') || 'null');
     if (saved) { if (saved.mode) S.cal.mode = saved.mode; if (Array.isArray(saved.kinds)) { S.kinds = new Set(saved.kinds.filter(k => KINDS.some(x => x[0] === k))); for (const [k] of KINDS) if (!(saved.seen || ['act', 'rem']).includes(k)) S.kinds.add(k); } if (Array.isArray(saved.hidden)) S.hidden = new Set(saved.hidden); }
@@ -101,6 +101,11 @@
     S.activities = (await data.list('activities')).filter(a => kids.has(a.owner));
     S.reminders = (await data.list('reminders')).filter(r => kids.has(r.owner));
     S.tasks = (await data.list('tasks')).filter(t => kids.has(t.owner));
+    S.periods = (await data.list('periods')).filter(p => kids.has(p.owner));
+    const pids = new Set(S.periods.map(p => p.id));
+    S.exams = (await data.list('exams')).filter(x => pids.has(x.period));
+    S.sessions = (await data.list('sessions')).filter(x => pids.has(x.period));
+    if (!S.periods.some(p => p.id === S.study.period)) S.study.period = periodsSorted()[0]?.id || null;
     S.terms = await data.list('terms');
     S.daysoff = await data.list('daysoff');
     S.sc = C.schoolCalendar(S.terms, S.daysoff);
@@ -188,8 +193,8 @@
   }
 
   /* ---------- Events (activities and reminders) ---------- */
-  const src = () => ({ activities: S.activities, reminders: S.reminders, tasks: S.tasks, sc: S.sc });
-  const KLABEL = { act: 'Activity', rem: 'Reminder', task: 'Due', step: 'Step' };
+  const src = () => ({ activities: S.activities, reminders: S.reminders, tasks: S.tasks, exams: S.exams, sessions: S.sessions, sc: S.sc });
+  const KLABEL = { act: 'Activity', rem: 'Reminder', task: 'Due', step: 'Step', exam: 'Exam', study: 'Study' };
   /* Category label shown on every calendar item, with the subject where there is one. */
   const ctag = e => `<span class="ctag">${esc(e.cat || KLABEL[e.kind] || '')}${e.subject ? ' · ' + esc(e.subject) : ''}</span>`;
   const stepList = e => e.steps && e.steps.length ? `<span class="evsteps">${e.steps.map(st => `<span class="${st.done || e.done ? 'struck' : ''}">${esc(st.text)}</span>`).join('')}</span>` : '';
@@ -239,6 +244,7 @@
             ${!S.activities.length ? `<div class="nudge"><p class="small">Add weekly activities like hockey practice or music lessons. They repeat every week and pause in school holidays.</p><button class="btn sm pri" data-act="add" data-v="activity">Add an activity</button></div>` : ''}
           </section>
           ${dueSoonCard()}
+          ${examCountdownCard()}
           <section class="card"><div class="card-h"><h3>Reminders this week</h3><button class="btn sm" data-act="add" data-v="reminder">Add reminder</button></div>
             ${soon.length ? soon.map(e => evRow(e, true)).join('') : '<p class="empty">No reminders in the next seven days.</p>'}
           </section>
@@ -276,7 +282,7 @@
           ${upcomingReminders(c.id)}</section>
         <section class="card"><div class="card-h"><h3>Homework and projects</h3><button class="btn sm" data-act="add" data-v="task" data-child="${c.id}">Add</button></div>
           ${taskRows(S.tasks.filter(t => t.owner === c.id && !t.done).sort(byDue), true) || '<p class="empty">No open homework or projects.</p>'}</section>
-        <section class="card"><div class="card-h"><h3>Exams</h3><span class="pill">Milestone 4</span></div><p class="empty">Upcoming exams will show here.</p></section>
+        <section class="card"><div class="card-h"><h3>Upcoming exams</h3><button class="btn sm" data-act="nav" data-v="study">Study planner</button></div>${examRows(S.exams.filter(x => x.owner === c.id && x.date >= C.today()).sort(byDate).slice(0, 8), true) || '<p class="empty">No exams coming up.</p>'}</section>
         <section class="card"><div class="card-h"><h3>Money</h3><span class="pill">Milestone 5</span></div><p class="empty">Savings and money owed will show here.</p></section>
       </div></div>`;
   }
@@ -390,6 +396,315 @@
     </section>`;
   }
 
+  /* ---------- Study planner ---------- */
+  const ST = FH.study;
+  const byDate = (a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || ''));
+  const periodsSorted = () => S.periods.slice().sort((a, b) => {
+    const fa = S.exams.filter(x => x.period === a.id).map(x => x.date).sort()[0] || a.createdAt || '';
+    const fb = S.exams.filter(x => x.period === b.id).map(x => x.date).sort()[0] || b.createdAt || '';
+    return fa.localeCompare(fb);
+  });
+  const examTitle = x => `${x.subject}${x.paper ? ' ' + x.paper : ''}`;
+  function examRows(list, withChild) {
+    const s = C.today();
+    return list.map(x => {
+      const n = C.diffDays(s, x.date);
+      return `<button class="ev evb" style="--c:var(--${colOf(x.owner)})" data-act="exam-edit" data-v="${x.id}">
+        <span class="t">${C.DOW[C.dow(x.date)]}<small>${C.toD(x.date).getDate()} ${C.MON[C.toD(x.date).getMonth()]}</small></span><span class="bar"></span>
+        <span class="min0"><span class="ti">${esc(examTitle(x))}</span><span class="sub"><span class="ctag">Exam</span> ${withChild ? esc(nameOf(x.owner)) + ' · ' : ''}${x.time ? x.time : 'time not set'}${x.mins ? ` · ${x.mins} min` : ''}</span></span>
+        ${n >= 0 ? `<span class="countdown">${n}<small>${n === 1 ? 'day' : 'days'}</small></span>` : '<span class="tag">Written</span>'}</button>`;
+    }).join('');
+  }
+  function examCountdownCard() {
+    const s = C.today();
+    const list = S.exams.filter(x => x.date >= s && C.diffDays(s, x.date) <= 21).sort(byDate);
+    if (!list.length) return '';
+    return `<section class="card"><div class="card-h"><h3>Exams, next 3 weeks</h3><button class="btn sm" data-act="nav" data-v="study">Study planner</button></div>${examRows(list.slice(0, 6), true)}${list.length > 6 ? `<p class="meta" style="margin-top:6px">${list.length - 6} more in the study planner</p>` : ''}</section>`;
+  }
+
+  function vStudy() {
+    const st = S.study;
+    const periods = periodsSorted();
+    const p = periods.find(x => x.id === st.period) || null;
+    const head = `<div class="calbar"><div class="ttl">Exam periods</div><button class="btn" data-act="period-add">New exam period</button></div>
+      ${periods.length ? `<div class="toggles" style="margin-bottom:14px">${periods.map(x => `<button class="tg" style="--c:var(--${colOf(x.owner)})" data-act="study-period" data-v="${x.id}" aria-pressed="${x.id === st.period}"><span class="dot"></span>${esc(nameOf(x.owner))} · ${esc(x.name)}</button>`).join('')}</div>` : ''}`;
+    if (!p) return `<div class="view">${head}<section class="card coming"><h2 class="solo-h">Plan for exams</h2><p>Create an exam period for a child, add the exams (from a photo of the timetable, by pasting it, or one by one), and Family Hub builds a revision plan you can adjust and tick off.</p><div><button class="btn pri" data-act="period-add">New exam period</button></div></section></div>`;
+    if (st.imp && st.imp.period === p.id) return `<div class="view">${head}${importPanel(p)}</div>`;
+    const exams = S.exams.filter(x => x.period === p.id).sort(byDate);
+    const sess = S.sessions.filter(x => x.period === p.id).sort(byDate);
+    const range = exams.length ? `${C.fmtDay(exams[0].date)} – ${C.fmtDay(exams[exams.length - 1].date)} ${exams[exams.length - 1].date.slice(0, 4)}` : 'No exams added yet';
+    const doneN = sess.filter(x => x.done).length;
+    return `<div class="view">${head}
+      <section class="card phead2" style="--c:var(--${colOf(p.owner)})"><div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div class="min0"><div class="eyebrow">${esc(nameOf(p.owner))}</div><h2 class="solo-h">${esc(p.name)}</h2><p class="meta">${range} · ${exams.length} ${exams.length === 1 ? 'exam' : 'exams'}${sess.length ? ` · ${doneN} of ${sess.length} sessions done` : ''}</p></div>
+        <button class="btn sm" data-act="period-edit" data-v="${p.id}">Edit</button></div>
+        ${sess.length ? `<div class="track" style="margin-top:10px"><div class="fill" style="width:${Math.round(doneN / sess.length * 100)}%;--c:var(--${colOf(p.owner)})"></div></div>` : ''}
+      </section>
+      <div class="seg" role="group" style="margin:14px 0">${[['exams', `Exams (${exams.length})`], ['plan', `Revision plan (${sess.length})`]].map(([k, l]) => `<button data-act="study-tab" data-v="${k}" aria-pressed="${st.tab === k}">${l}</button>`).join('')}</div>
+      ${st.tab === 'plan' ? planView(p, exams, sess) : `<section class="card"><div class="card-h"><h3>Exams</h3></div>
+        ${exams.length ? examRows(exams) : '<p class="empty">No exams yet. Read them from the school\'s timetable, or add them one by one.</p>'}
+        <div class="row" style="margin-top:12px"><button class="btn pri" data-act="imp-start">Read exam timetable</button><button class="btn" data-act="exam-add">Add exam</button></div>
+        ${exams.length && !sess.length ? `<div class="nudge"><p class="small">Exams added. Next, build the revision plan.</p><button class="btn sm pri" data-act="study-tab" data-v="plan">Go to revision plan</button></div>` : ''}
+      </section>`}
+    </div>`;
+  }
+
+  function planView(p, exams, sess) {
+    const s = C.today();
+    const future = exams.filter(x => x.date >= s);
+    if (!sess.length) return `<section class="card stack">
+      <p>The plan adds four sessions before each exam: summary notes (10 days before), practice questions (6 days), a past paper (3 days) and a final revision (the day before, 90 minutes).</p>
+      <p class="meta">At most two sessions a day, at 17:30 and 19:00 on school days and 10:00 and 14:00 on weekends. Days already past are skipped. Every session can be moved, changed or deleted afterwards.</p>
+      <div class="row"><button class="btn pri" data-act="plan-build" ${future.length ? '' : 'disabled'}>Build revision plan</button>${future.length ? '' : '<span class="meta">Add exams that are still coming up first.</span>'}</div>
+    </section>`;
+    const byDay = new Map();
+    for (const x of sess) { if (!byDay.has(x.date)) byDay.set(x.date, []); byDay.get(x.date).push(x); }
+    const upcoming = [...byDay.entries()].filter(([d]) => d >= s);
+    const past = [...byDay.entries()].filter(([d]) => d < s);
+    const dayBlock = ([d, xs]) => `<div class="dategrp">${C.fmtDay(d)}${d === s ? ' · today' : ''}</div>${xs.map(x => `<div class="sess" style="--c:var(--${colOf(x.owner)})">
+        <button class="cb" role="checkbox" aria-checked="${!!x.done}" aria-label="Mark ${esc(x.subject)} session done" data-act="sess-done" data-v="${x.id}">${ic('check')}</button>
+        <span class="stime">${x.time || ''}</span>
+        <button class="min0 slink ${x.done ? 'struck' : ''}" data-act="sess-edit" data-v="${x.id}">${esc(x.subject)} <span class="muted">· ${esc(x.label)}${x.mins ? `, ${x.mins} min` : ''}</span></button></div>`).join('')}`;
+    const prog = exams.map(e => { const xs = sess.filter(x => x.exam === e.id); const dn = xs.filter(x => x.done).length; return `<div class="prog" style="--c:var(--${colOf(e.owner)})"><span class="min0"><b>${esc(examTitle(e))}</b> <span class="muted">· ${C.fmtDay(e.date)}</span></span><span class="muted" style="font-size:13px">${dn}/${xs.length}</span><div class="track"><div class="fill" style="width:${xs.length ? Math.round(dn / xs.length * 100) : 0}%"></div></div></div>`; }).join('');
+    return `<div class="cols">
+      <section class="card"><div class="card-h"><h3>Sessions</h3><button class="btn sm" data-act="sess-add">Add session</button></div>
+        ${upcoming.length ? upcoming.map(dayBlock).join('') : '<p class="empty">No sessions left. Good luck!</p>'}
+        ${past.length ? `<details class="pastsess"><summary>Earlier sessions (${past.reduce((n, [, xs]) => n + xs.length, 0)})</summary>${past.reverse().map(dayBlock).join('')}</details>` : ''}
+      </section>
+      <div class="stack">
+        <section class="card"><div class="card-h"><h3>Progress per exam</h3></div>${prog || '<p class="empty">No exams.</p>'}</section>
+        <section class="card"><div class="card-h"><h3>Change the plan</h3></div>
+          <p class="small">Rebuilding replaces the sessions still to come that aren't ticked off. Sessions you've done, and earlier ones, stay.</p>
+          <div class="row" style="margin-top:10px"><button class="btn sm del" data-act="plan-rebuild">Rebuild plan</button></div></section>
+      </div></div>`;
+  }
+
+  /* Timetable import: choose a photo or paste text, then review before saving. */
+  function importPanel(p) {
+    const im = S.study.imp;
+    if (im.stage === 'reading') return `<section class="card stack"><h2 class="solo-h">Reading the timetable…</h2>
+      <p class="small">${esc(im.status || 'Starting')}</p>
+      <div class="track"><div class="fill" style="width:${Math.round((im.progress || 0) * 100)}%;--c:var(--accent)"></div></div>
+      <p class="meta">This happens on your device; the photo is not uploaded. The first time, the reader downloads about 5 MB.</p>
+      <div><button class="btn" data-act="imp-cancel">Cancel</button></div></section>`;
+    if (im.stage === 'review') {
+      const flagged = im.rows.filter(r => r.flag).length;
+      return `<section class="card stack"><div class="card-h" style="margin:0"><h3>Check the exams</h3><span class="meta">${im.rows.length} found${flagged ? ` · ${flagged} to check` : ''}</span></div>
+        <p class="small">Text read from a photo is never perfect. Correct anything highlighted, remove lines that aren't exams, then save.</p>
+        ${im.photo ? `<details class="photoref"><summary>Show the photo</summary><img src="${im.photo}" alt="Your timetable photo"></details>` : ''}
+        <datalist id="subjects">${ST.SUBJECTS.map(([n]) => `<option value="${esc(n)}">`).join('')}</datalist>
+        <div class="tbl"><table class="imp"><thead><tr><th>Subject</th><th>Paper</th><th>Date</th><th>Start</th><th></th></tr></thead><tbody>
+          ${im.rows.map((r, i) => `<tr class="${r.flag ? 'flag' : ''}" data-i="${i}">
+            <td><input id="ir-s-${i}" class="ir-s" list="subjects" value="${esc(r.subject)}" aria-label="Subject">${r.flag ? `<div class="flagnote">${esc(r.flag)}</div>` : ''}</td>
+            <td style="width:76px"><input id="ir-p-${i}" class="ir-p" value="${esc(r.paper)}" aria-label="Paper" placeholder="P1"></td>
+            <td style="width:150px"><input id="ir-d-${i}" class="ir-d" type="date" value="${r.date}" aria-label="Date"></td>
+            <td style="width:104px"><input id="ir-t-${i}" class="ir-t" type="time" value="${r.time}" aria-label="Start time"></td>
+            <td style="width:44px"><button type="button" class="rm" data-act="imp-row-rm" data-v="${i}" aria-label="Remove this line">×</button></td></tr>`).join('')}
+        </tbody></table></div>
+        ${im.rows.length ? '' : '<p class="empty">No exams were found in the text. Add them below, or try a sharper photo taken straight on.</p>'}
+        ${im.text ? `<details class="photoref"><summary>Show the text that was read</summary><pre>${esc(im.text)}</pre></details>` : ''}
+        <div class="err" id="imp-err" role="alert"></div>
+        <div class="row" style="justify-content:space-between"><button class="btn" data-act="imp-row-add">Add a line</button>
+          <span class="row"><button class="btn" data-act="imp-cancel">Cancel</button><button class="btn pri" data-act="imp-save">Save ${im.rows.length || ''} ${im.rows.length === 1 ? 'exam' : 'exams'}</button></span></div>
+      </section>`;
+    }
+    return `<section class="card stack"><h2 class="solo-h">Read the exam timetable</h2>
+      <p class="small">Take a photo of the timetable the school sent, or choose one from your photos. For the best result, photograph it straight on, in good light, with the whole table in view.</p>
+      ${inFrame ? '<p class="hint">Photo reading works in the installed app. In this test link, paste the timetable text below instead.</p>' : ''}
+      <div class="row"><label class="btn pri${inFrame ? ' disabled' : ''}" for="imp-photo">Choose or take a photo</label><input type="file" id="imp-photo" accept="image/*" hidden ${inFrame ? 'disabled' : ''}></div>
+      <label class="fld">Or paste the timetable text (for example from an email or WhatsApp)<textarea id="imp-text" rows="6" placeholder="Tue 3 Nov  08:30  Mathematics P1&#10;Thu 5 Nov  08:30  English HL P1"></textarea></label>
+      <div class="err" id="imp-err" role="alert">${esc(im.error || '')}</div>
+      <div class="row"><button class="btn" data-act="imp-cancel">Cancel</button><button class="btn pri" data-act="imp-text">Read the text</button><button class="btn" data-act="imp-manual">Type them in instead</button></div>
+    </section>`;
+  }
+
+  function periodSheet() {
+    const sh = S.sheet;
+    const p = sh.id ? S.periods.find(x => x.id === sh.id) : null;
+    const kid = kidOf(p ? p.owner : sh.child) || S.children[0];
+    const month = C.MONL[new Date().getMonth()];
+    return panel(p ? `Edit ${esc(p.name)}` : 'New exam period', `
+      <form class="form" data-form="period" style="margin-top:14px">
+        ${childSelect(p ? p.owner : kid?.id)}
+        <label>Name<input id="f-title" value="${esc(p?.name || `${kid?.grade ? kid.grade + ' ' : ''}${month} exams`)}" autocomplete="off"></label>
+        ${p ? `<p class="hint full">Deleting the period also deletes its exams and revision sessions.</p>` : ''}
+        <div class="err full" id="f-err" role="alert"></div>
+        <div class="actions full">${p ? delBtn(sh, 'this exam period') : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${p ? 'Save' : 'Create'}</button></div>
+      </form>`);
+  }
+  function examSheet() {
+    const sh = S.sheet;
+    const x = sh.id ? S.exams.find(e => e.id === sh.id) : null;
+    const planned = x ? S.sessions.filter(s2 => s2.exam === x.id).length : 0;
+    return panel(x ? `Edit ${esc(examTitle(x))}` : 'Add an exam', `
+      <datalist id="subjects">${ST.SUBJECTS.map(([n]) => `<option value="${esc(n)}">`).join('')}</datalist>
+      <form class="form" data-form="exam" style="margin-top:14px">
+        <label>Subject<input id="f-title" list="subjects" value="${esc(x?.subject || '')}" placeholder="e.g. Mathematics" autocomplete="off"></label>
+        <label>Paper (optional)<input id="f-paper" value="${esc(x?.paper || '')}" placeholder="e.g. P1" autocomplete="off"></label>
+        <label>Date<input id="f-date" type="date" value="${x?.date || ''}"></label>
+        <label>Start time<input id="f-time" type="time" value="${x?.time || '08:30'}"></label>
+        <label>Length in minutes (optional)<input id="f-mins" inputmode="numeric" value="${x?.mins || ''}" placeholder="e.g. 120"></label>
+        ${planned ? `<p class="hint full">This exam has ${planned} revision sessions. If you change the date, rebuild the plan to move them.</p>` : ''}
+        <div class="err full" id="f-err" role="alert"></div>
+        <div class="actions full">${x ? delBtn(sh, 'this exam') : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${x ? 'Save' : 'Add exam'}</button></div>
+      </form>`);
+  }
+  function sessionSheet() {
+    const sh = S.sheet;
+    const x = sh.id ? S.sessions.find(e => e.id === sh.id) : null;
+    const pexams = S.exams.filter(e => e.period === (x ? x.period : sh.period)).sort(byDate);
+    return panel(x ? `${esc(x.subject)}` : 'Add a study session', `
+      <form class="form" data-form="session" style="margin-top:14px">
+        <label class="full">For exam<select id="f-exam">${pexams.map(e => `<option value="${e.id}" ${e.id === x?.exam ? 'selected' : ''}>${esc(examTitle(e))} · ${C.fmtDay(e.date)}</option>`).join('')}</select></label>
+        <label>Date<input id="f-date" type="date" value="${x?.date || C.today()}"></label>
+        <label>Start<input id="f-time" type="time" value="${x?.time || '17:30'}"></label>
+        <label>Minutes<input id="f-mins" inputmode="numeric" value="${x?.mins || 60}"></label>
+        <label>What to do<input id="f-title" value="${esc(x?.label || 'Revision')}" autocomplete="off"></label>
+        ${x ? `<label class="chk full"><input id="f-done" type="checkbox" ${x.done ? 'checked' : ''}>Done</label>` : ''}
+        <div class="err full" id="f-err" role="alert"></div>
+        <div class="actions full">${x ? delBtn(sh, 'this session') : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${x ? 'Save' : 'Add session'}</button></div>
+      </form>`);
+  }
+
+  async function savePeriod() {
+    const sh = S.sheet;
+    const name = val('#f-title');
+    if (!name) return fail('Give the exam period a name, for example Grade 10 November exams.');
+    const rec = { owner: val('#f-child'), name };
+    if (sh.id) rec.id = sh.id;
+    const saved = await data.save('periods', rec);
+    if (sh.id) for (const st of ['exams', 'sessions']) for (const x of S[st].filter(r => r.period === sh.id && r.owner !== rec.owner)) await data.save(st, { id: x.id, owner: rec.owner });
+    S.sheet = null; S.study.period = saved.id; if (!sh.id) S.study.tab = 'exams'; await load(); go('study');
+    toast(sh.id ? 'Exam period saved.' : `${name} created. Add the exams next.`);
+    return true;
+  }
+  async function saveExam() {
+    const sh = S.sheet;
+    const p = S.periods.find(x => x.id === (sh.id ? S.exams.find(e => e.id === sh.id).period : S.study.period));
+    const subject = val('#f-title'), date = val('#f-date'), time = val('#f-time'), minsS = val('#f-mins');
+    if (!subject) return fail('Enter the subject.');
+    if (!C.isDate(date)) return fail('Choose the exam date.');
+    if (time && !C.isTime(time)) return fail('The start time is not a valid time.');
+    const mins = minsS ? parseInt(minsS, 10) : 0;
+    if (minsS && !(mins > 0 && mins < 600)) return fail('Enter the length in minutes, for example 120.');
+    const rec = { owner: p.owner, period: p.id, subject, paper: val('#f-paper').toUpperCase(), date, time, mins };
+    if (sh.id) rec.id = sh.id;
+    await data.save('exams', rec);
+    if (sh.id) for (const x of S.sessions.filter(r => r.exam === sh.id)) await data.save('sessions', { id: x.id, subject: `${subject}${rec.paper ? ' ' + rec.paper : ''}` });
+    S.sheet = null; await load(); render();
+    toast(`${subject}${rec.paper ? ' ' + rec.paper : ''} ${sh.id ? 'saved' : 'added'} for ${C.fmtDay(date)}.`);
+    return true;
+  }
+  async function saveSession() {
+    const sh = S.sheet;
+    const ex = S.exams.find(e => e.id === val('#f-exam'));
+    const date = val('#f-date'), time = val('#f-time'), mins = parseInt(val('#f-mins'), 10), label = val('#f-title');
+    if (!ex) return fail('Choose the exam this session is for.');
+    if (!C.isDate(date)) return fail('Choose the date.');
+    if (date > ex.date) return fail(`This is after the exam (${C.fmtDay(ex.date)}). Choose an earlier date.`);
+    if (!C.isTime(time)) return fail('Enter the start time.');
+    if (!(mins > 0 && mins <= 300)) return fail('Enter the minutes, for example 60.');
+    const rec = { owner: ex.owner, period: ex.period, exam: ex.id, subject: examTitle(ex), date, time, mins, label: label || 'Revision' };
+    if (sh.id) { rec.id = sh.id; rec.done = !!$('#f-done')?.checked; } else rec.done = false;
+    await data.save('sessions', rec);
+    S.sheet = null; await load(); render();
+    toast(sh.id ? 'Session saved.' : `Session added for ${C.fmtDay(date)}.`);
+    return true;
+  }
+  async function buildPlan(rebuild) {
+    const p = S.periods.find(x => x.id === S.study.period);
+    const s = C.today();
+    const exams = S.exams.filter(x => x.period === p.id && x.date >= s);
+    if (rebuild) for (const x of S.sessions.filter(r => r.period === p.id && !r.done && r.date >= s)) await data.remove('sessions', x.id);
+    await load();
+    const keep = S.sessions.filter(r => r.period === p.id);
+    const examsNeeding = exams.filter(e => !keep.some(k => k.exam === e.id && k.date >= s) || rebuild);
+    const busy = S.sessions.filter(x => x.owner === p.owner && x.date >= s).map(x => x.date);
+    /* Don't plan a step again that's already been done (for example a ticked-off past paper). */
+    const plan = ST.buildPlan(examsNeeding, busy, s).filter(x => !keep.some(k => k.exam === x.exam && k.label === x.label && k.done));
+    for (const x of plan) await data.save('sessions', { ...x, owner: p.owner, period: p.id });
+    await load(); render();
+    toast(plan.length ? `${plan.length} revision sessions added. They're on the calendar too.` : 'No new sessions could be added: the exams are too close or the days are full.');
+  }
+
+  /* Photo reading: the Tesseract library is loaded only when you first use it. */
+  function loadReader() {
+    if (window.Tesseract) return Promise.resolve(window.Tesseract);
+    return new Promise((res, rej) => {
+      const sc = document.createElement('script');
+      sc.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+      sc.onload = () => (window.Tesseract ? res(window.Tesseract) : rej(new Error('reader missing')));
+      sc.onerror = () => rej(new Error("The photo reader couldn't be downloaded. Connect to the internet and try again; after the first time it's kept on this device."));
+      document.head.appendChild(sc);
+    });
+  }
+  async function shrink(file) {
+    try {
+      const bmp = await createImageBitmap(file);
+      const k = Math.min(1, 2200 / Math.max(bmp.width, bmp.height));
+      const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * k); cv.height = Math.round(bmp.height * k);
+      const g = cv.getContext('2d'); g.filter = 'grayscale(1) contrast(1.3)'; g.drawImage(bmp, 0, 0, cv.width, cv.height);
+      return cv;
+    } catch (e) { return file; }
+  }
+  async function readPhoto(file) {
+    const im = S.study.imp;
+    const run = im.run = Date.now();
+    im.stage = 'reading'; im.progress = 0; im.status = 'Preparing the photo'; im.error = '';
+    try { if (im.photo) URL.revokeObjectURL(im.photo); } catch (e) { /* ignore */ }
+    im.photo = URL.createObjectURL(file);
+    render();
+    try {
+      const T = await loadReader();
+      if (S.study.imp?.run !== run) return;
+      im.status = 'Loading the reader'; render();
+      const img = await shrink(file);
+      const res = await T.recognize(img, 'eng', { logger: m => {
+        if (S.study.imp?.run !== run) return;
+        const bar = document.querySelector('.view .track .fill');
+        if (m.status === 'recognizing text') { im.status = 'Reading the text'; im.progress = m.progress; }
+        else if (m.status) { im.status = 'Getting ready: ' + m.status; }
+        if (bar) bar.style.width = Math.round((im.progress || 0) * 100) + '%';
+        const st = document.querySelector('.view .stack .small'); if (st) st.textContent = im.status;
+      } });
+      if (S.study.imp?.run !== run) return;
+      im.text = res.data.text || '';
+      im.rows = ST.parseTimetable(im.text, C.today());
+      im.stage = 'review'; render();
+    } catch (e) {
+      console.error(e);
+      if (S.study.imp?.run !== run) return;
+      im.stage = 'pick'; im.error = e.message && e.message.includes('internet') ? e.message : `The photo couldn't be read (${e.message || e}). Try again, or paste the text instead.`; render();
+    }
+  }
+  function syncImportRows() {
+    const im = S.study.imp; if (!im || im.stage !== 'review') return;
+    im.rows.forEach((r, i) => {
+      const g = c => document.getElementById(`ir-${c}-${i}`);
+      if (!g('s')) return;
+      r.subject = g('s').value.trim(); r.paper = g('p').value.trim().toUpperCase(); r.date = g('d').value; r.time = g('t').value;
+    });
+  }
+  async function saveImport() {
+    syncImportRows();
+    const im = S.study.imp;
+    const p = S.periods.find(x => x.id === im.period);
+    const err = m => { const e = $('#imp-err'); if (e) e.textContent = m; };
+    const rows = im.rows.filter(r => r.subject || r.date);
+    if (!rows.length) return err('There are no exams to save. Add a line, or cancel.');
+    const bad = rows.findIndex(r => !r.subject || !C.isDate(r.date) || (r.time && !C.isTime(r.time)));
+    if (bad >= 0) return err(`Line ${bad + 1} needs a subject and a valid date${rows[bad].time ? ' and time' : ''}.`);
+    let added = 0, skipped = 0;
+    for (const r of rows) {
+      if (S.exams.some(x => x.period === p.id && x.subject.toLowerCase() === r.subject.toLowerCase() && (x.paper || '') === (r.paper || '') && x.date === r.date)) { skipped++; continue; }
+      await data.save('exams', { owner: p.owner, period: p.id, subject: r.subject, paper: r.paper, date: r.date, time: r.time, mins: 0 });
+      added++;
+    }
+    try { if (im.photo) URL.revokeObjectURL(im.photo); } catch (e) { /* ignore */ }
+    S.study.imp = null; S.study.tab = 'exams'; await load(); render();
+    toast(`${added} ${added === 1 ? 'exam' : 'exams'} saved${skipped ? `, ${skipped} already there` : ''}. Next, build the revision plan.`);
+  }
+
   /* ---------- Calendar ---------- */
   function toggles() {
     const allOn = S.children.every(c => !S.hidden.has(c.id));
@@ -457,7 +772,7 @@
       </div>
       <div class="filters">${toggles()}${kindToggles()}</div>
       ${noKids ? '<section class="card"><p class="empty">Add a child first.</p></section>' : vis.size && S.kinds.size ? body : '<section class="card"><p class="empty">Switch on at least one child and one item type above to see the schedule.</p></section>'}
-      <div class="legend"><span class="swatch-off"></span>School holiday or day off. Weekly activities pause on these days unless set to run in holidays. Exams and study join this calendar in milestone 4.</div>
+      <div class="legend"><span class="swatch-off"></span>School holiday or day off. Weekly activities pause on these days unless set to run in holidays.</div>
     </div>`;
   }
 
@@ -717,7 +1032,7 @@
       app.innerHTML = vSetup(); renderSheet(); return;
     }
     const v = S.view;
-    const content = v === 'today' ? vToday() : v === 'calendar' ? vCalendar() : v === 'tasks' ? vTasks() : v === 'settings' ? vSettings() : v === 'child' ? vChild(S.child) : COMING[v] ? vComing(v) : vToday();
+    const content = v === 'today' ? vToday() : v === 'calendar' ? vCalendar() : v === 'tasks' ? vTasks() : v === 'study' ? vStudy() : v === 'settings' ? vSettings() : v === 'child' ? vChild(S.child) : COMING[v] ? vComing(v) : vToday();
     const fab = ['today', 'calendar', 'child', 'tasks'].includes(v) && S.children.length;
     const title = v === 'child' ? (S.children.find(c => c.id === S.child)?.name || 'Child') : TITLES[v] || 'Family Hub';
     const cur = k => (v === k ? 'aria-current="page"' : '');
@@ -745,7 +1060,8 @@
     if (!S.sheet) { el.hidden = true; el.innerHTML = ''; return; }
     const k = S.sheet.kind;
     el.innerHTML = k === 'child' ? childSheet() : k === 'restore' ? restoreSheet() : k === 'activity' ? activitySheet()
-      : k === 'reminder' ? reminderSheet() : k === 'event' ? eventSheet() : k === 'task' ? taskSheet() : k === 'taskview' ? taskViewSheet() : k === 'term' ? termSheet() : dayoffSheet();
+      : k === 'reminder' ? reminderSheet() : k === 'event' ? eventSheet() : k === 'task' ? taskSheet() : k === 'taskview' ? taskViewSheet()
+      : k === 'period' ? periodSheet() : k === 'exam' ? examSheet() : k === 'session' ? sessionSheet() : k === 'term' ? termSheet() : dayoffSheet();
     el.hidden = false;
   }
 
@@ -985,6 +1301,7 @@
           for (const x of S.activities.filter(r => r.owner === sh.id)) await data.remove('activities', x.id);
           for (const x of S.reminders.filter(r => r.owner === sh.id)) await data.remove('reminders', x.id);
           for (const x of S.tasks.filter(r => r.owner === sh.id)) await data.remove('tasks', x.id);
+          for (const st of ['sessions', 'exams', 'periods']) for (const x of S[st].filter(r => r.owner === sh.id)) await data.remove(st, x.id);
           await data.remove('people', sh.id);
           S.sheet = null; await load();
           if (S.view === 'child' && S.child === sh.id) go('today'); else render();
@@ -1029,7 +1346,7 @@
         case 'day-toggle': b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); return;
         case 'ev': {
           const [k, id, date] = v.split('|');
-          S.sheet = k === 'task' || k === 'step' ? { kind: 'taskview', id } : { kind: 'event', ekind: k, id, date };
+          S.sheet = k === 'task' || k === 'step' ? { kind: 'taskview', id } : k === 'exam' ? { kind: 'exam', id } : k === 'study' ? { kind: 'session', id } : { kind: 'event', ekind: k, id, date };
           renderSheet(); return;
         }
         /* tasks */
@@ -1089,14 +1406,46 @@
         case 'rec-del': {
           const sh = S.sheet;
           if (!sh.confirm) { sh.confirm = true; b.classList.add('armed'); b.textContent = 'Tap again to delete'; return; }
-          const store = { activity: 'activities', reminder: 'reminders', term: 'terms', dayoff: 'daysoff', task: 'tasks' }[sh.kind];
-          const list = { activity: S.activities, reminder: S.reminders, term: S.terms, dayoff: S.daysoff, task: S.tasks }[sh.kind];
+          const store = { activity: 'activities', reminder: 'reminders', term: 'terms', dayoff: 'daysoff', task: 'tasks', exam: 'exams', session: 'sessions', period: 'periods' }[sh.kind];
+          const list = { activity: S.activities, reminder: S.reminders, term: S.terms, dayoff: S.daysoff, task: S.tasks, exam: S.exams, session: S.sessions, period: S.periods }[sh.kind];
+          if (sh.kind === 'period') for (const st of ['sessions', 'exams']) for (const x of S[st].filter(r => r.period === sh.id)) await data.remove(st, x.id);
+          if (sh.kind === 'exam') for (const x of S.sessions.filter(r => r.exam === sh.id && !r.done)) await data.remove('sessions', x.id);
           const rec = list.find(x => x.id === sh.id);
           await data.remove(store, sh.id);
           S.sheet = null; await load(); render();
           toast(`${rec?.title || rec?.name || 'Item'} deleted.`);
           return;
         }
+        /* study planner */
+        case 'study-period': S.study.period = v; S.study.imp = null; render(); return;
+        case 'study-tab': S.study.tab = v; render(); return;
+        case 'period-add': if (!S.children.length) { toast('Add a child first.'); return; } S.sheet = { kind: 'period', child: S.view === 'child' ? S.child : (S.periods.find(x => x.id === S.study.period)?.owner || S.children[0].id) }; renderSheet(); return;
+        case 'period-edit': S.sheet = { kind: 'period', id: v }; renderSheet(); return;
+        case 'exam-add': S.sheet = { kind: 'exam' }; renderSheet(); setTimeout(() => $('#f-title')?.focus(), 30); return;
+        case 'exam-edit': S.sheet = { kind: 'exam', id: v }; renderSheet(); return;
+        case 'imp-start': S.study.imp = { period: S.study.period, stage: 'pick', rows: [] }; render(); return;
+        case 'imp-cancel': try { if (S.study.imp?.photo) URL.revokeObjectURL(S.study.imp.photo); } catch (e) { /* ignore */ } S.study.imp = null; render(); return;
+        case 'imp-text': {
+          const t = ($('#imp-text')?.value || '').trim();
+          if (!t) { $('#imp-err').textContent = 'Paste the timetable text first, or choose a photo.'; return; }
+          Object.assign(S.study.imp, { stage: 'review', text: t, rows: FH.study.parseTimetable(t, C.today()), photo: null });
+          render(); return;
+        }
+        case 'imp-manual': Object.assign(S.study.imp, { stage: 'review', text: '', rows: [{ subject: '', paper: '', date: '', time: '08:30', flag: '' }] }); render(); return;
+        case 'imp-row-rm': syncImportRows(); S.study.imp.rows.splice(Number(v), 1); render(); return;
+        case 'imp-row-add': { syncImportRows(); const last = S.study.imp.rows[S.study.imp.rows.length - 1]; S.study.imp.rows.push({ subject: '', paper: '', date: last?.date || '', time: last?.time || '08:30', flag: '' }); render(); document.getElementById(`ir-s-${S.study.imp.rows.length - 1}`)?.focus(); return; }
+        case 'imp-save': await saveImport(); return;
+        case 'plan-build': await buildPlan(false); return;
+        case 'plan-rebuild':
+          if (!b.classList.contains('armed')) { b.classList.add('armed'); b.textContent = 'Tap again to rebuild'; return; }
+          await buildPlan(true); return;
+        case 'sess-done': {
+          const x = S.sessions.find(r => r.id === v);
+          await data.save('sessions', { id: x.id, done: !x.done });
+          await load(); render(); renderSheet(); return;
+        }
+        case 'sess-edit': S.sheet = { kind: 'session', id: v }; renderSheet(); return;
+        case 'sess-add': S.sheet = { kind: 'session', period: S.study.period }; renderSheet(); return;
         case 'install': if (S.installEvt) { S.installEvt.prompt(); const r = await S.installEvt.userChoice; S.installEvt = null; render(); if (r.outcome === 'accepted') toast('Family Hub is being installed.'); } return;
         default: return;
       }
@@ -1112,6 +1461,9 @@
     try {
       if (f === 'child') await saveChild();
       if (f === 'task') await saveTask();
+      if (f === 'period') await savePeriod();
+      if (f === 'exam') await saveExam();
+      if (f === 'session') await saveSession();
       if (f === 'activity') await saveActivity();
       if (f === 'reminder') await saveReminder();
       if (f === 'term') await saveTerm();
@@ -1126,6 +1478,7 @@
   });
 
   document.addEventListener('change', ev => {
+    if (ev.target.id === 'imp-photo') { const f = ev.target.files && ev.target.files[0]; ev.target.value = ''; if (f && S.study.imp) readPhoto(f); return; }
     if (ev.target.id !== 'restore-file') return;
     const file = ev.target.files && ev.target.files[0];
     if (!file) return;

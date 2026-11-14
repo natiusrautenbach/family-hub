@@ -10,7 +10,7 @@
   const FH = (window.FH = window.FH || {});
 
   const DB_NAME = 'family-hub';
-  const DB_VERSION = 3;
+  const DB_VERSION = 4;
   const BACKUP_FORMAT = 1;
 
   /* Each milestone adds stores by raising DB_VERSION and adding to this map;
@@ -25,6 +25,9 @@
     terms:      { indexes: ['start'] },         // milestone 2: school terms (official or yours)
     daysoff:    { indexes: ['date'] },          // milestone 2: public holidays and school days off
     tasks:      { indexes: ['owner', 'due'] },  // milestone 3: homework and projects, with their steps
+    periods:    { indexes: ['owner'] },                 // milestone 4: exam periods
+    exams:      { indexes: ['owner', 'period', 'date'] }, // milestone 4: exams in a period
+    sessions:   { indexes: ['owner', 'period', 'date'] }, // milestone 4: revision sessions
   };
 
   const now = () => new Date().toISOString();
@@ -101,6 +104,9 @@
       terms: ['read'],
       daysoff: ['read'],
       tasks: ['read:own'],
+      periods: ['read:own'],
+      exams: ['read:own'],
+      sessions: ['read:own'],
     },
     child_limited: {
       people: ['read:own'],
@@ -109,6 +115,9 @@
       terms: ['read'],
       daysoff: ['read'],
       tasks: ['read:own', 'update:own'],
+      periods: ['read:own'],
+      exams: ['read:own'],
+      sessions: ['read:own', 'update:own'],
       approvals: ['read:own', 'create:own'],
     },
   };
