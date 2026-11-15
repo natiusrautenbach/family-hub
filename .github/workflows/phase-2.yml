@@ -75,3 +75,12 @@ jobs:
             sleep 10
           done
           echo "::error::Live site does not show $want (got: $got)"; exit 1
+      - name: Check internal files are not published
+        if: steps.key.outputs.ready == 'yes'
+        run: |
+          bad=0
+          for f in firebase.json firestore.rules .firebaserc tests/e2e.mjs .github/workflows/phase-2.yml README.md; do
+            code=$(curl -s -o /tmp/body -w "%{http_code}" "https://herding-cats-1e399.web.app/$f")
+            if [ "$code" = "200" ] && ! grep -q "<div id=\"app\"" /tmp/body; then echo "::error::$f is publicly reachable"; bad=1; else echo "Not published: $f ($code)"; fi
+          done
+          exit $bad
