@@ -6,6 +6,8 @@ rules_version = '2';
 //   users/{uid}                    which family a person belongs to (only they can see it)
 //   families/{fid}                 the family: name, administrator, plan, consent
 //   families/{fid}/members/{uid}   each person in the family and their role
+//   families/{fid}/invites/{token} invite links (single use, expire after 7 days)
+//   families/{fid}/records/{rid}   the family's data, one document per record (synced)
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -16,6 +18,24 @@ service cloud.firestore {
     function myRole(fid) { return get(memberPath(fid, request.auth.uid)).data.role; }
     function isOwner(fid) { return isMember(fid) && myRole(fid) == 'owner'; }
     function shortText(v, max) { return v is string && v.size() > 0 && v.size() <= max; }
+    function invitePath(fid, token) { return /databases/$(database)/documents/families/$(fid)/invites/$(token); }
+    function canWrite(fid) { return isMember(fid) && myRole(fid) in ['owner', 'parent']; }
+    // The kinds of record the app keeps (must match SYNCED in js/db.js).
+    function knownStore(s) {
+      return s in ['people', 'activities', 'reminders', 'terms', 'daysoff', 'tasks', 'periods', 'exams', 'sessions',
+                   'accounts', 'entries', 'goals', 'ledger', 'chores', 'rewards'];
+    }
+    // Joining with an invite: unused, not expired, same role as the invite, and the
+    // invite is marked as used by this person in the same batch.
+    function joiningWithInvite(fid, uid) {
+      let token = request.resource.data.invite;
+      let inv = get(invitePath(fid, token));
+      return token is string
+        && inv.data.usedBy == null
+        && inv.data.expiresAt > request.time
+        && request.resource.data.role == inv.data.role
+        && getAfter(invitePath(fid, token)).data.usedBy == uid;
+    }
 
     // Each person's pointer to their family. Only they can read or change it.
     match /users/{uid} {
@@ -47,17 +67,71 @@ service cloud.firestore {
       match /members/{uid} {
         allow read: if isMember(fid);
 
-        // The owner's own record, only while the family itself is being created.
+        // Either the owner's own record while the family itself is being created,
+        // or a person joining with a valid invite.
         allow create: if signedIn() && uid == request.auth.uid
-          && !exists(famPath(fid))
-          && getAfter(famPath(fid)).data.ownerUid == request.auth.uid
-          && request.resource.data.keys().hasOnly(['uid', 'role', 'displayName', 'email', 'joinedAt', 'personId'])
           && request.resource.data.uid == uid
-          && request.resource.data.role == 'owner'
-          && shortText(request.resource.data.displayName, 60);
+          && shortText(request.resource.data.displayName, 60)
+          && (
+            (!exists(famPath(fid))
+              && getAfter(famPath(fid)).data.ownerUid == request.auth.uid
+              && request.resource.data.keys().hasOnly(['uid', 'role', 'displayName', 'email', 'joinedAt', 'personId'])
+              && request.resource.data.role == 'owner')
+            ||
+            (exists(famPath(fid))
+              && !exists(memberPath(fid, uid))
+              && request.resource.data.keys().hasOnly(['uid', 'role', 'displayName', 'email', 'joinedAt', 'personId', 'invite'])
+              && request.resource.data.personId == null
+              && joiningWithInvite(fid, uid))
+          );
 
         allow update, delete: if isOwner(fid);
       }
+
+      // Invite links. Anyone signed in who has the link may read that one invite
+      // (to see the family name); only the owner can list, create or cancel them.
+      match /invites/{token} {
+        allow get: if signedIn();
+        allow list, delete: if isOwner(fid);
+        allow create: if isOwner(fid)
+          && request.resource.data.keys().hasOnly(['role', 'familyName', 'createdBy', 'createdAt', 'expiresAt', 'usedBy'])
+          && request.resource.data.role == 'parent'
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.usedBy == null
+          && request.resource.data.expiresAt is timestamp
+          && request.resource.data.expiresAt < request.time + duration.value(8, 'd')
+          && shortText(request.resource.data.familyName, 80);
+        // Used once, by the person joining, together with their member record.
+        allow update: if signedIn()
+          && resource.data.usedBy == null
+          && resource.data.expiresAt > request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usedBy', 'usedAt'])
+          && request.resource.data.usedBy == request.auth.uid
+          && getAfter(memberPath(fid, request.auth.uid)).data.invite == token;
+      }
+
+      // The family's data. Parents and the owner can add and change; a change is only
+      // accepted when it is at least as new as what is stored (so an old change that
+      // arrives late never overwrites a newer one). Nothing is ever hard-deleted here.
+      match /records/{rid} {
+        allow read: if isMember(fid);
+        allow create: if canWrite(fid) && validRecord(rid);
+        allow update: if canWrite(fid) && validRecord(rid)
+          && request.resource.data.updatedAt >= resource.data.updatedAt;
+        allow delete: if false;
+      }
+    }
+
+    function validRecord(rid) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['store', 'id', 'updatedAt', 'by', 'deleted', 'json', 'syncAt'])
+        && knownStore(d.store)
+        && d.id is string && d.id.size() > 0 && d.id.size() <= 80
+        && rid == d.store + '~' + d.id
+        && d.updatedAt is string && d.updatedAt.size() <= 30
+        && d.deleted is bool
+        && d.json is string && d.json.size() <= 200000
+        && d.syncAt == request.time;
     }
   }
 }

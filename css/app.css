@@ -465,3 +465,10 @@ label.btn.disabled{opacity:.5;pointer-events:none}
 .privacy .small{margin-top:6px}
 .ok{color:var(--good);font-weight:600}
 form.stack .btn.pri{justify-self:start}
+/* Phase 2: family, invites and sync */
+.invbox{margin-top:12px;padding:12px;border-radius:10px;background:var(--sunk);display:grid;gap:8px}
+.invbox input{font-size:13px}
+.warnbox{background:color-mix(in srgb,var(--warn) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--warn) 35%,var(--line));border-radius:10px;padding:10px 12px}
+.meta.changed{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+#sync-line[data-state="offline"],#sync-line[data-state="sending"]{color:var(--warn);font-weight:600}
+#sync-line[data-state="ok"]{color:var(--good);font-weight:600}

@@ -11,7 +11,7 @@
 
   /* Internal names stay 'family-hub' after the rename to Herding Cats, so existing data and backups keep working. */
   let DB_NAME = 'family-hub';
-  const DB_VERSION = 6;
+  const DB_VERSION = 7;
   const BACKUP_FORMAT = 1;
 
   /* Each milestone adds stores by raising DB_VERSION and adding to this map;
@@ -35,7 +35,12 @@
     ledger:     { indexes: ['owner', 'date'] },         // milestone 5: money owed either way
     chores:     { indexes: ['owner'] },                 // milestone 6: chores with their done/not-done log and payouts
     rewards:    { indexes: ['owner'] },                 // milestone 6: reward goals (count towards a target)
+    outbox:     { indexes: [] },                        // Phase 2: changes made here that the family server hasn't confirmed yet
   };
+  /* Stores shared with the family through sync. meta (device settings), users
+     (who signed in on this device) and the outbox stay on the device. */
+  const SYNCED = Object.keys(SCHEMA).filter(s => !['meta', 'users', 'approvals', 'outbox'].includes(s));
+  const OFFICIAL_STAMP = '2000-01-01T00:00:00.000Z'; // official school dates: any change a person makes is newer
 
   const now = () => new Date().toISOString();
   const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
@@ -84,6 +89,7 @@
   const raw = {
     async all(store) { const db = await open(); return reqP(db.transaction(store).objectStore(store).getAll()); },
     async get(store, id) { const db = await open(); return reqP(db.transaction(store).objectStore(store).get(id)); },
+    async del(store, id) { const db = await open(); const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).delete(id); await done(tx); },
     async put(store, rec) { const db = await open(); const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).put(rec); await done(tx); return rec; },
     async clearAll(stores) {
       const db = await open(); const tx = db.transaction(stores, 'readwrite');
@@ -171,6 +177,9 @@
   let currentUser = null;
   let deviceId = null;
   let sessionUser = null; // the signed-in family member (Phase 2), or null for the local-only beta
+  /* Phase 2 sync: told about every change made on this device (store, record). */
+  let onChange = null;
+  const changed = (store, rec) => { if (onChange && SYNCED.includes(store)) { try { onChange(store, rec); } catch (e) { console.warn(e); } } };
 
   const data = {
     get user() { return currentUser; },
@@ -188,11 +197,11 @@
       return r;
     },
 
-    async save(store, fields) {
+    async save(store, fields, opts) {
       const existing = fields.id ? await raw.get(store, fields.id) : null;
       const isNew = !existing || existing.deleted;
       if (!can(currentUser, isNew ? 'create' : 'update', store, existing || fields)) throw new AccessError(isNew ? 'add' : 'change', store);
-      const t = now();
+      const t = opts && opts.official ? OFFICIAL_STAMP : now();
       const rec = Object.assign({}, existing || {}, fields, {
         id: fields.id || uuid(),
         createdAt: existing?.createdAt || t,
@@ -202,7 +211,9 @@
         device: deviceId,
         deleted: false,
       });
-      return raw.put(store, rec);
+      await raw.put(store, rec);
+      changed(store, rec);
+      return rec;
     },
 
     async remove(store, id) {
@@ -211,12 +222,41 @@
       if (!can(currentUser, 'delete', store, r)) throw new AccessError('remove', store);
       const t = now();
       /* Soft delete: kept as a marker so a later sync knows it was removed. */
-      await raw.put(store, Object.assign({}, r, { deleted: true, updatedAt: t, updatedBy: currentUser.id, device: deviceId }));
+      const rec = Object.assign({}, r, { deleted: true, updatedAt: t, updatedBy: currentUser.id, device: deviceId });
+      await raw.put(store, rec);
+      changed(store, rec);
+    },
+
+    /* ---------- Phase 2 sync ---------- */
+    SYNCED,
+    set onChange(fn) { onChange = fn; },
+    /* Applies a change from another device when it is newer than what is here.
+       Returns true when something changed on this device. */
+    async applyRemote(store, rec) {
+      if (!SYNCED.includes(store) || !rec || typeof rec.id !== 'string') return false;
+      const here = await raw.get(store, rec.id);
+      if (here && (here.updatedAt || '') >= (rec.updatedAt || '')) return false;
+      await raw.put(store, rec);
+      return true;
+    },
+    async allSynced() { const out = []; for (const s of SYNCED) for (const r of await raw.all(s)) out.push([s, r]); return out; },
+    outbox: {
+      all: () => raw.all('outbox'),
+      add: (store, rec) => raw.put('outbox', { id: store + '~' + rec.id, store, recId: rec.id, updatedAt: rec.updatedAt }),
+      async done(store, rec) {
+        const o = await raw.get('outbox', store + '~' + rec.id);
+        if (o && o.updatedAt === rec.updatedAt) await raw.del('outbox', o.id); // a newer change may be waiting
+      },
+      get: (store, id) => raw.get(store, id),
     },
 
     /* Whether a record id has ever existed here, including removed ones.
        Used so the official school calendar never brings back what you removed. */
     async known(store, id) { return !!(await raw.get(store, id)); },
+
+    /* Device bookkeeping (sync position and the like), allowed for every role. */
+    async getLocal(key, fallback) { const r = await raw.get('meta', 'local:' + key); return r ? r.value : fallback; },
+    async setLocal(key, value) { await raw.put('meta', { id: 'local:' + key, value, updatedAt: now() }); },
 
     async getSetting(key, fallback) { const r = await raw.get('meta', key); return r ? r.value : fallback; },
     async setSetting(key, value) {

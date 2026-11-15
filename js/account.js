@@ -15,6 +15,18 @@
     set(v) { try { localStorage.setItem(SESSION, JSON.stringify(v)); } catch (e) { /* not kept: signs in again next time */ } },
     clear() { try { localStorage.removeItem(SESSION); } catch (e) { /* nothing kept */ } },
   };
+  /* An invite link looks like …/?join=<family id>.<invite token>. It is remembered for this
+     visit while the person signs in, then removed from the address. */
+  const JOIN = 'hc-join';
+  (function catchInvite() {
+    try {
+      const u = new URL(location.href), j = u.searchParams.get('join');
+      if (j && /^[\w-]{6,40}\.[\w-]{16,40}$/.test(j)) sessionStorage.setItem(JOIN, j);
+      if (j) { u.searchParams.delete('join'); history.replaceState(null, '', u.pathname + (u.search || '') + u.hash); }
+    } catch (e) { /* no invite */ }
+  })();
+  const pendingJoin = () => { try { const j = sessionStorage.getItem(JOIN); if (!j) return null; const [fid, token] = j.split('.'); return { fid, token }; } catch (e) { return null; } };
+  const clearJoin = () => { try { sessionStorage.removeItem(JOIN); } catch (e) { /* nothing kept */ } };
   const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error('timeout'), { code: 'unavailable' })), ms))]);
   const offline = e => e && ['unavailable', 'sdk-unavailable', 'auth/network-request-failed', 'deadline-exceeded'].includes(e.code);
 
@@ -61,6 +73,7 @@
     const u = cloud.user();
     if (!u) { keep.clear(); return show(st.screen === 'loading' ? 'signin' : st.screen); }
     st.user = u;
+    if (pendingJoin()) return showJoin(u);
     if (cached && cached.uid === u.uid) {
       done(cached, false);
       refresh(u); // check in the background that the family is still theirs
@@ -70,6 +83,7 @@
   }
 
   async function findFamily(u) {
+    if (pendingJoin()) return showJoin(u);
     show('loading');
     try {
       const r = await withTimeout(cloud.myFamily(), 15000);
@@ -86,6 +100,26 @@
       if (r) { const s = session(u, r); keep.set(s); if (A.session) Object.assign(A.session, s); }
     } catch (e) { /* offline: keep using what the device remembers */ }
   }
+  /* Someone opened an invite link: check it, then ask them to confirm. */
+  async function showJoin(u) {
+    const j = pendingJoin();
+    show('loading');
+    try {
+      const [inv, cur] = await Promise.all([withTimeout(cloud.readInvite(j.fid, j.token), 15000), withTimeout(cloud.myFamily(), 15000).catch(() => null)]);
+      if (cur && cur.family.id === j.fid) { clearJoin(); return done(session(u, cur), false); } // already in this family
+      st.invite = Object.assign({}, j, inv || {});
+      st.current = cur;
+      st.name = st.name || (cur && cur.member.name) || u.name || '';
+      if (!inv) { st.error = 'This invite link has been cancelled or is incomplete. Ask for a new one.'; return show('join-bad'); }
+      if (inv.used && !inv.usedByMe) { st.error = 'This invite link has already been used. Each link works once: ask for a new one.'; return show('join-bad'); }
+      if (inv.expired) { st.error = 'This invite link has expired. Invite links last 7 days: ask for a new one.'; return show('join-bad'); }
+      show('join');
+    } catch (e) {
+      st.error = cloud.message(e);
+      show(offline(e) ? 'offline' : 'join-bad');
+    }
+  }
+
   const session = (u, r) => ({ uid: u.uid, email: u.email, name: r.member.name || u.name || u.email, provider: u.provider, familyId: r.family.id, familyName: r.family.name, familyCode: r.family.code, role: r.member.role, personId: r.member.personId });
 
   function done(s, offlineStart) {
@@ -119,7 +153,26 @@
     if (s === 'loading') return `<div class="solo"><p class="muted center" style="padding-top:40px">Opening Herding Cats…</p></div>`;
     if (s === 'offline') return `<div class="solo">${hero('No connection', 'Herding Cats needs the internet the first time you sign in on this device.')}
       <section class="card stack">${err()}<div><button class="btn pri" data-gate="retry">Try again</button></div></section></div>`;
-    if (s === 'signin') return `<div class="solo">${hero('Sign in', 'Sign in to see your family. New to Herding Cats? Create an account below.')}
+    if (s === 'join') {
+      const inv = st.invite;
+      return `<div class="solo">${hero(`Join ${esc(inv.familyName)}`, `You've been invited to join as a <b>parent</b>: you'll see and change everything in the family, and its data will be on this device too.`)}
+      <section class="card stack">
+        <form class="stack" data-gate-form="join" novalidate>
+          <label class="fld">Your name, as your family sees it<input id="g-name" autocomplete="name" value="${esc(st.name)}" autofocus required></label>
+          ${st.current ? `<p class="small warnbox">You're currently in <b>${esc(st.current.family.name)}</b>. Joining moves your account to ${esc(inv.familyName)}; you'll no longer see ${esc(st.current.family.name)}.</p>` : ''}
+          ${err()}
+          <button class="btn pri" type="submit" ${st.busy ? 'disabled' : ''}>${busy(`Join ${esc(inv.familyName)}`)}</button>
+        </form>
+        <div class="row" style="justify-content:space-between">
+          <button type="button" class="btn ghost sm" data-gate="join-skip">Not now</button>
+          <span class="hint">Signed in as ${esc(st.user ? st.user.email : '')}</span>
+        </div>
+      </section></div>`;
+    }
+    if (s === 'join-bad') return `<div class="solo">${hero('Invite link', '')}
+      <section class="card stack">${err()}<div><button class="btn pri" data-gate="join-skip">Continue</button></div></section></div>`;
+    const joining = pendingJoin() ? ' to join your family' : '';
+    if (s === 'signin') return `<div class="solo">${hero('Sign in', joining ? 'Sign in, or create an account, to join your family.' : 'Sign in to see your family. New to Herding Cats? Create an account below.')}
       <section class="card stack">
         <form class="stack" data-gate-form="signin" novalidate>
           <label class="fld">Email<input id="g-email" type="email" autocomplete="email" inputmode="email" value="${esc(st.email)}" autofocus required></label>
@@ -134,7 +187,7 @@
           <button type="button" class="btn ghost sm" data-gate="to-signup">Create an account</button>
         </div>
       </section></div>`;
-    if (s === 'signup') return `<div class="solo">${hero('Create an account', 'One account per person. Each person in your family signs in with their own.')}
+    if (s === 'signup') return `<div class="solo">${hero('Create an account', `One account per person. Each person in your family signs in with their own${joining}.`)}
       <section class="card stack">
         <form class="stack" data-gate-form="signup" novalidate>
           <label class="fld">Your name<input id="g-name" autocomplete="name" value="${esc(st.name)}" placeholder="e.g. Natius" autofocus required></label>
@@ -209,6 +262,17 @@
       if (!emailOk(email)) { st.error = "Enter your email address, e.g. name@gmail.com."; return show('reset'); }
       run(async () => { await cloud.reset(email); st.note = `If there is an account for ${email}, a reset link is on its way. Check your email, including spam.`; });
     }
+    if (f === 'join') {
+      const name = val('g-name');
+      st.name = name;
+      if (!name) { st.error = 'Enter your name.'; return show('join'); }
+      const inv = st.invite;
+      run(async () => {
+        const r = await cloud.joinFamily(inv.fid, inv.token, name);
+        clearJoin();
+        done(session(st.user || cloud.user(), r), false);
+      });
+    }
     if (f === 'family') {
       const family = val('g-family'), name = val('g-name');
       st.name = name; st.family = family; st.consent = $('#g-consent').checked;
@@ -231,6 +295,7 @@
     if (a === 'to-signin') { st.email = val('g-email') || st.email; return show('signin'); }
     if (a === 'to-reset') { st.email = val('g-email') || st.email; return show('reset'); }
     if (a === 'retry') return start();
+    if (a === 'join-skip') { clearJoin(); st.invite = null; return st.user ? findFamily(st.user) : show('signin'); }
     if (a === 'signout') return run(async () => { await cloud.signOut(); keep.clear(); st.user = null; st.screen = 'signin'; });
     if (a === 'google') return run(async () => { const u = await cloud.google(); if (u) { st.user = u; await findFamily(u); } });
   });

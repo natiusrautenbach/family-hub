@@ -59,6 +59,53 @@ try {
   await pg.waitForSelector('.shell', { timeout: 20000 }); await pg.waitForTimeout(300);
   ok(await pg.evaluate(() => FH.app.S.children.map(c => c.name).join()) === 'Ava', 'sign back in: family found again');
 
+  // ---------- Two devices: invite, join, sync both ways, offline ----------
+  if (await pg.locator('[data-act=digest-close]').count()) await pg.click('[data-act=digest-close]');
+  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await pg.waitForSelector('#people .set', { timeout: 15000 });
+  await pg.click('[data-act=inv-new]'); await pg.waitForSelector('#inv-link', { timeout: 15000 });
+  const link = await pg.inputValue('#inv-link');
+  ok(link.includes('?join='), 'owner makes an invite link');
+
+  const { ctx: ctxW, pg: pw } = await newPage();
+  await pw.goto(link); await pw.waitForSelector('#g-email', { timeout: 30000 });
+  await pw.click('[data-gate=to-signup]'); await pw.fill('#g-name', 'Wife'); await pw.fill('#g-email', 'wife@example.com'); await pw.fill('#g-pass', 'password123');
+  await submit(pw, 'signup'); await pw.waitForSelector('[data-gate-form=join]', { timeout: 20000 });
+  ok((await pw.innerText('.hero')).includes('Join The Rautenbachs'), 'invite opens the Join screen');
+  await submit(pw, 'join'); await pw.waitForSelector('.shell', { timeout: 30000 });
+  await pw.waitForFunction(() => FH.app.S.children.some(c => c.name === 'Ava'), null, { timeout: 20000 }).catch(() => {});
+  ok(await pw.evaluate(() => FH.app.S.children.map(c => c.name).join()) === 'Ava', "wife's phone receives the family's data");
+  if (await pw.locator('[data-act=digest-close]').count()) await pw.click('[data-act=digest-close]');
+
+  const addReminder = async (p, title) => { await p.click('.fab'); await p.click('[data-act=add-type][data-v=reminder]'); await p.fill('#f-title', title); await p.fill('#f-date', '2026-11-20'); await p.click('.panel button[type=submit]'); await p.waitForTimeout(400); };
+  await addReminder(pw, 'Swimming gala');
+  const arrived = async (p, title) => p.waitForFunction(t => FH.app.S.reminders.some(r => r.title === t), title, { timeout: 20000 }).then(() => true).catch(() => false);
+  ok(await arrived(pg, 'Swimming gala'), "owner's phone receives the wife's reminder live");
+  await addReminder(pg, 'Cricket form');
+  ok(await arrived(pw, 'Cricket form'), "wife's phone receives the owner's reminder live");
+
+  await ctxW.setOffline(true); await pw.waitForTimeout(500);
+  await addReminder(pw, 'Written offline');
+  ok(await pw.evaluate(() => FH.sync.status().waiting) > 0, 'offline change waits in the outbox');
+  ok(!(await pg.evaluate(() => FH.app.S.reminders.some(r => r.title === 'Written offline'))), 'not yet on the other phone while offline');
+  await ctxW.setOffline(false);
+  ok(await arrived(pg, 'Written offline'), 'back online: the waiting change arrives');
+  await pw.waitForFunction(() => FH.sync.status().waiting === 0, null, { timeout: 20000 }).catch(() => {});
+  ok(await pw.evaluate(() => FH.sync.status().waiting) === 0, 'outbox empties once sent');
+
+  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await pg.waitForFunction(() => (FH.app.S.members || []).length === 2, null, { timeout: 15000 }).catch(() => {});
+  ok((await pg.innerText('#people')).includes('Wife'), 'family card lists both people');
+  await pg.evaluate(() => { const r = FH.app.S.reminders.find(x => x.title === 'Swimming gala'); FH.app.S.sheet = { kind: 'reminder', id: r.id }; FH.app.render(); });
+  ok((await pg.innerText('#sheet')).includes('Last changed by Wife'), 'form shows who last changed it');
+  await pg.keyboard.press('Escape');
+
+  const { pg: pc } = await newPage();
+  await pc.goto(link); await pc.waitForSelector('#g-email', { timeout: 30000 });
+  await pc.click('[data-gate=to-signup]'); await pc.fill('#g-name', 'Stranger'); await pc.fill('#g-email', 'stranger@example.com'); await pc.fill('#g-pass', 'password123');
+  await submit(pc, 'signup'); await pc.waitForSelector('[data-gate=join-skip]', { timeout: 20000 });
+  ok((await pc.innerText('.solo')).includes('already been used'), 'a used invite link is refused');
+
   const { pg: pg2 } = await newPage(1280);
   await pg2.goto(URL); await pg2.waitForSelector('#g-email', { timeout: 30000 });
   await signUp(pg2, 'Sam', 'sam@example.com', 'Other family');

@@ -8,9 +8,9 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '2.1.0';
+  const VERSION = '2.2.0';
   const MILESTONE = 7;
-  const PHASE2 = '2.1'; // Phase 2 milestone in this build
+  const PHASE2 = '2.2'; // Phase 2 milestone in this build
 
   /* ---------- Small helpers ---------- */
   const $ = s => document.querySelector(s);
@@ -127,12 +127,12 @@
     let added = 0;
     for (const t of C.OFFICIAL.terms) {
       if (await data.known('terms', t.id)) continue;
-      await data.save('terms', { id: t.id, name: t.name, start: t.start, end: t.end, official: { name: t.name, start: t.start, end: t.end } });
+      await data.save('terms', { id: t.id, name: t.name, start: t.start, end: t.end, official: { name: t.name, start: t.start, end: t.end } }, { official: true });
       added++;
     }
     for (const d of C.OFFICIAL.daysoff) {
       if (await data.known('daysoff', d.id)) continue;
-      await data.save('daysoff', { id: d.id, name: d.name, date: d.date, end: '', official: { name: d.name, date: d.date, end: '' } });
+      await data.save('daysoff', { id: d.id, name: d.name, date: d.date, end: '', official: { name: d.name, date: d.date, end: '' } }, { official: true });
       added++;
     }
     return added;
@@ -174,7 +174,7 @@
         <div><button class="btn sm addstep" data-act="su-add">${ic('plus')}Add another child</button></div>
         <div class="err" id="su-err" role="alert"></div>
         <div class="row" style="justify-content:space-between">
-          <button class="btn" data-act="go-restore">Restore from a backup</button>
+          ${S.session ? '<span></span>' : '<button class="btn" data-act="go-restore">Restore from a backup</button>'}
           <button class="btn pri" data-act="su-finish">Start using Herding Cats</button>
         </div>
       </section>
@@ -208,10 +208,75 @@
     return `<section class="card" id="account"><div class="card-h"><h3>Your account</h3><span class="pill on">${esc(ROLE_LABEL[s.role] || s.role)}</span></div>
         <div class="set"><span class="min0"><b>${esc(s.name)}</b><span class="muted"> · ${esc(s.email)}</span></span></div>
         <div class="set"><span class="min0">Family: <b>${esc(S.family || s.familyName)}</b>${isOwner ? '<span class="muted"> · you are its administrator</span>' : ''}</span></div>
-        <p class="hint" style="margin-top:8px">Inviting your family, roles for each person and children's logins arrive in the next updates. For now, what you add stays on this device.</p>
+        ${FH.sync && FH.sync.available ? `<div class="set"><span class="min0">Sync: <span id="sync-line" data-state="${S.syncStatus ? S.syncStatus.state : ''}">${syncLine(S.syncStatus)}</span></span></div>` : ''}
+        <p class="hint" style="margin-top:8px">Everything you add is shared with your family and kept on this device too, so it works without internet. Roles for each person and children's logins arrive in the next updates.</p>
         <div class="row" style="margin-top:10px"><button class="btn sm" data-act="acct-signout">Sign out</button></div>
       </section>
+      ${membersCard()}
       <section class="card"><div class="card-h"><h3>Privacy</h3></div>${FH.account.PRIVACY}</section>`;
+  }
+
+  /* ---------- Phase 2: family, sync and people ---------- */
+  const SHEET_STORE = { child: 'children', activity: 'activities', reminder: 'reminders', task: 'tasks', taskview: 'tasks', period: 'periods', exam: 'exams', session: 'sessions', account: 'accounts', entry: 'entries', goal: 'goals', ledger: 'ledger', settle: 'ledger', chore: 'chores', reward: 'rewards', term: 'terms', dayoff: 'daysoff' };
+  const personName = uid => uid && S.session && uid === S.session.uid ? 'you' : ((S.members || []).find(m => m.uid === uid) || {}).name || '';
+  /* "Last changed by …" on a record's form, once more than one person is in the family. */
+  function changedBy() {
+    const sh = S.sheet;
+    if (!S.session || !sh || !sh.id || (S.members || []).length < 2) return '';
+    const list = S[SHEET_STORE[sh.kind]];
+    const r = Array.isArray(list) ? list.find(x => x.id === sh.id) : null;
+    if (!r || !r.updatedBy || r.updatedAt < '2001') return '';
+    const nm = personName(r.updatedBy);
+    return nm ? `Last changed by ${esc(nm)} · ${fmtStamp(r.updatedAt)}` : '';
+  }
+  async function loadPeople() {
+    if (!S.session || !FH.cloud.members) return;
+    try {
+      S.members = (await FH.cloud.members(S.session.familyId)).sort((a, b) => (a.role === 'owner' ? -1 : 0) - (b.role === 'owner' ? -1 : 0) || a.joinedAt - b.joinedAt);
+      if (S.session.role === 'owner') S.invites = (await FH.cloud.invites(S.session.familyId)).filter(i => !i.usedBy && i.expiresAt > Date.now());
+      try { localStorage.setItem('hc-members-' + S.session.familyId, JSON.stringify(S.members)); } catch (e) { /* not kept */ }
+    } catch (e) {
+      try { S.members = S.members || JSON.parse(localStorage.getItem('hc-members-' + S.session.familyId)) || []; } catch (x) { S.members = S.members || []; }
+    }
+    if (S.view === 'settings' && !S.sheet) render();
+  }
+  const inviteLink = token => `${location.origin}${location.pathname}?join=${S.session.familyId}.${token}`;
+  function syncLine(st) {
+    if (!st || st.state === 'off') return '';
+    const when = st.lastSync ? `${pad(new Date(st.lastSync).getHours())}:${pad(new Date(st.lastSync).getMinutes())}` : '';
+    return st.state === 'offline' ? `Offline${st.waiting ? ` · ${st.waiting} change${st.waiting === 1 ? '' : 's'} waiting to send` : ' · showing what this device has'}`
+      : st.state === 'sending' ? `Sending ${st.waiting} change${st.waiting === 1 ? '' : 's'}…`
+      : st.state === 'starting' ? 'Connecting…'
+      : `Up to date${when ? ` · checked ${when}` : ''}${st.error ? ` · ${esc(st.error)}` : ''}`;
+  }
+  function syncStatusChanged(st) {
+    S.syncStatus = st;
+    const el = document.getElementById('sync-line');
+    if (el) { el.textContent = syncLine(st); el.dataset.state = st.state; }
+  }
+  function membersCard() {
+    const s = S.session;
+    if (!s || !FH.cloud.members) return '';
+    const owner = s.role === 'owner';
+    const ms = S.members || [];
+    const ni = S.newInvite;
+    return `<section class="card" id="people"><div class="card-h"><h3>Your family</h3>${owner ? '<button class="btn sm" data-act="inv-new">Invite someone</button>' : ''}</div>
+      ${ms.length ? ms.map(m => `<div class="set"><span class="min0"><b>${esc(m.name)}</b>${m.uid === s.uid ? ' <span class="muted">(you)</span>' : ''}<span class="muted"> · ${esc(m.email)}</span></span><span class="pill ${m.role === 'owner' ? 'on' : ''}">${esc(ROLE_LABEL[m.role] || m.role)}</span></div>`).join('') : '<p class="empty">Loading…</p>'}
+      ${ni ? `<div class="invbox" id="new-invite"><b class="small">Invite link for a parent</b>
+          <input id="inv-link" readonly value="${esc(inviteLink(ni.token))}" aria-label="Invite link">
+          <div class="row"><button class="btn sm pri" data-act="inv-copy">Copy link</button>${navigator.share ? '<button class="btn sm" data-act="inv-share">Share…</button>' : ''}</div>
+          <p class="hint">Send it to one person, e.g. on WhatsApp. It works once and expires on ${C.fmtDay(C.toS(new Date(ni.expiresAt)))}. They open it, sign in or create an account, and join as a parent.</p></div>` : ''}
+      ${owner && (S.invites || []).length ? `<p class="flbl" style="margin-top:10px">Open invite links</p>${S.invites.map(i => `<div class="set"><span class="small">For a parent · expires ${C.fmtDay(C.toS(new Date(i.expiresAt)))}</span><button class="btn sm" data-act="inv-cancel" data-v="${esc(i.token)}">Cancel</button></div>`).join('')}` : ''}
+      ${owner ? '' : '<p class="hint" style="margin-top:8px">Only the family administrator can invite people.</p>'}
+    </section>`;
+  }
+  async function newInvite() {
+    const s = S.session;
+    try {
+      const inv = await FH.cloud.createInvite(s.familyId, S.family || s.familyName, 'parent');
+      S.newInvite = inv; await loadPeople(); render();
+      $('#new-invite')?.scrollIntoView({ block: 'center' });
+    } catch (e) { toast(`No invite was made: ${FH.cloud.message(e)}`); }
   }
 
   function roadmap() {
@@ -1384,12 +1449,13 @@
       </section>
 
       <section class="card" id="backup"><div class="card-h"><h3>Backup and other devices</h3></div>
-        <p class="small">A backup holds everything on this device in one file. Use it to keep a copy safe, or to move your data to your phone or PC: export here, then restore on the other device.</p>
+        <p class="small">${S.session ? 'A backup holds all your family\'s data in one file: an extra copy, kept outside Herding Cats. Your other devices get everything through sync.' : 'A backup holds everything on this device in one file. Use it to keep a copy safe, or to move your data to your phone or PC: export here, then restore on the other device.'}</p>
         <div class="row" style="margin-top:12px">
           ${inFrame ? '' : `<button class="btn pri" data-act="export-file">Download backup file</button>`}
           <button class="btn ${inFrame ? 'pri' : ''}" data-act="export-copy">Copy backup as text</button>
-          <button class="btn" data-act="go-restore">Restore from a backup</button>
+          ${S.session ? '' : '<button class="btn" data-act="go-restore">Restore from a backup</button>'}
         </div>
+        ${S.session ? '<p class="hint" style="margin-top:8px">Your family\'s data is shared through sync, so restoring a backup isn\'t needed and is switched off. Keep a backup as an extra copy.</p>' : ''}
         ${inFrame ? '<p class="hint" style="margin-top:8px">In this test link, files can\'t be downloaded. Copy the backup as text and keep it in a note; the installed app adds a Download button.</p>' : ''}
         ${S.backupText ? `<label class="fld" style="margin-top:12px">Backup text<textarea id="backup-text" rows="4" readonly>${esc(S.backupText)}</textarea></label><p class="hint">If copying didn't work, select the text above and copy it yourself.</p>` : ''}
         <p class="meta" style="margin-top:8px">${S.lastBackup ? `Last backup on this device: ${fmtStamp(S.lastBackup)}` : 'No backup made on this device yet.'}${S.restoredAt ? ` · Restored from a backup: ${fmtStamp(S.restoredAt)}` : ''}</p>
@@ -1600,7 +1666,7 @@
     if (FH.account && FH.account.blocking) return; // the sign-in screens are showing
     const app = $('#app');
     if (S.error) { app.innerHTML = vError(); renderSheet(); return; }
-    if (!S.ready) { app.innerHTML = '<div class="solo"><p class="muted center" style="padding-top:40px">Opening Herding Cats…</p></div>'; return; }
+    if (!S.ready) { app.innerHTML = `<div class="solo"><p class="muted center" style="padding-top:40px">${S.syncWait ? 'Fetching your family\'s calendar…' : 'Opening Herding Cats…'}</p></div>`; return; }
     if (!S.children.length && !S.setupDone) {
       if (!S.setup) S.setup = { family: S.family || '', rows: [{ name: '', grade: 'Grade 1', colour: 'c1' }] };
       app.innerHTML = vSetup(); renderSheet(); return;
@@ -1631,12 +1697,18 @@
   }
   function renderSheet() {
     const el = $('#sheet');
-    if (!S.sheet) { el.hidden = true; el.innerHTML = ''; return; }
+    if (!S.sheet) {
+      el.hidden = true; el.innerHTML = '';
+      if (S.dirty) { S.dirty = false; render(); } // changes from the family arrived while a form was open
+      return;
+    }
     const k = S.sheet.kind;
     el.innerHTML = k === 'child' ? childSheet() : k === 'restore' ? restoreSheet() : k === 'activity' ? activitySheet()
       : k === 'reminder' ? reminderSheet() : k === 'event' ? eventSheet() : k === 'task' ? taskSheet() : k === 'taskview' ? taskViewSheet()
       : k === 'period' ? periodSheet() : k === 'exam' ? examSheet() : k === 'session' ? sessionSheet()
       : k === 'account' ? accountSheet() : k === 'entry' ? entrySheet() : k === 'goal' ? goalSheet() : k === 'ledger' ? ledgerSheet() : k === 'settle' ? settleSheet() : k === 'reach' ? reachSheet() : k === 'chore' ? choreSheet() : k === 'digest' ? digestSheet() : k === 'reward' ? rewardSheet() : k === 'term' ? termSheet() : dayoffSheet();
+    const who = changedBy();
+    if (who) { const p = el.querySelector('.panel'); if (p) p.insertAdjacentHTML('beforeend', `<p class="meta changed">${who}</p>`); }
     el.hidden = false;
   }
 
@@ -1859,7 +1931,7 @@
     try {
       switch (a) {
         case 'retry': location.reload(); return;
-        case 'nav': go(v); if (b.dataset.scroll) setTimeout(() => document.getElementById(b.dataset.scroll)?.scrollIntoView({ behavior: 'smooth' }), 50); return;
+        case 'nav': go(v); if (v === 'settings') loadPeople(); if (b.dataset.scroll) setTimeout(() => document.getElementById(b.dataset.scroll)?.scrollIntoView({ behavior: 'smooth' }), 50); return;
         case 'open-child': go('child', v); return;
         case 'child-add': S.sheet = { kind: 'child' }; renderSheet(); setTimeout(() => $('#f-name')?.focus(), 30); return;
         case 'child-edit': S.sheet = { kind: 'child', id: v }; renderSheet(); return;
@@ -1888,6 +1960,10 @@
         case 'su-col': { readSetupInputs(); const [i, k] = v.split('|'); S.setup.rows[Number(i)].colour = k; render(); return; }
         case 'su-finish': readSetupInputs(); await finishSetup(); return;
         case 'acct-signout': FH.account.signOut(); return;
+        case 'inv-new': await newInvite(); return;
+        case 'inv-copy': { const t = $('#inv-link'); try { await navigator.clipboard.writeText(t.value); toast('Invite link copied. Paste it in a message to the person you\'re inviting.'); } catch (e) { t.select(); toast('Select the link and copy it.'); } return; }
+        case 'inv-share': try { await navigator.share({ title: 'Join our family on Herding Cats', text: `Join ${S.family || S.session.familyName} on Herding Cats:`, url: $('#inv-link').value }); } catch (e) { /* closed */ } return;
+        case 'inv-cancel': try { await FH.cloud.cancelInvite(S.session.familyId, v); if (S.newInvite && S.newInvite.token === v) S.newInvite = null; await loadPeople(); toast('Invite link cancelled. It no longer works.'); } catch (e) { toast(FH.cloud.message(e)); } render(); return;
         case 'export-file': await exportFile(); return;
         case 'export-copy': await exportCopy(); return;
         case 'go-restore': startRestore(); return;
@@ -2200,6 +2276,13 @@
         S.session = s;
         data.useDatabase('hc-' + s.familyId);
         await data.ready({ id: s.uid, role: ['owner', 'parent'].includes(s.role) ? 'parent' : s.role, name: s.name, personId: s.personId });
+        if (FH.sync && FH.sync.available) {
+          const first = FH.sync.start(s);
+          /* A device new to this family waits briefly for the family's data before opening. */
+          if (!(await data.list('people')).length) { S.syncWait = true; render(); await first; S.syncWait = false; }
+          FH.sync.watch(syncStatusChanged);
+          loadPeople();
+        }
       } else await data.ready();
       await importOfficial();
       await loadSettings();
@@ -2222,5 +2305,12 @@
     await load(); render(); maybeDigest();
   });
 
-  FH.app = { S, render, version: VERSION };
+  /* Called by sync when changes arrive from the family. An open form is left alone
+     and the screen refreshes when it closes. */
+  async function refresh() {
+    if (!S.ready) return;
+    await load();
+    if (S.sheet) S.dirty = true; else render();
+  }
+  FH.app = { S, render, refresh, version: VERSION };
 })();
