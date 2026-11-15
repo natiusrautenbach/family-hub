@@ -1,5 +1,5 @@
 /* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Family Hub · app (beta, milestone 6)
+/* Family Hub · app (beta, milestone 7: Phase 1 complete)
    Screens: first-time setup, Today, Calendar (activities, reminders, school
    terms, tasks, exams, study), Tasks, Study planner, Money (accounts, savings
    goals, money owed, chores, reward goals), child pages, Settings. */
@@ -8,8 +8,8 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '0.6.1';
-  const MILESTONE = 6;
+  const VERSION = '1.0.0';
+  const MILESTONE = 7;
 
   /* ---------- Small helpers ---------- */
   const $ = s => document.querySelector(s);
@@ -197,8 +197,8 @@
   }
 
   function roadmap() {
-    return `<section class="card"><div class="card-h"><h3>Beta build</h3><span class="pill">Milestone ${MILESTONE} of 7</span></div>
-      <ol class="ms">${MILESTONES.map(([n, t, d]) => `<li class="${n < MILESTONE ? 'done' : n === MILESTONE ? 'now' : ''}"><span class="msn">${n}</span><span class="min0"><b>${t}</b><span class="muted"> · ${d}</span></span><span class="pill ${n === MILESTONE ? 'on' : ''}">${n < MILESTONE ? 'Done' : n === MILESTONE ? 'Ready to test' : 'Coming'}</span></li>`).join('')}</ol></section>`;
+    return `<section class="card"><div class="card-h"><h3>Phase 1 build</h3><span class="pill on">Complete</span></div>
+      <ol class="ms">${MILESTONES.map(([n, t, d]) => `<li class="${n <= MILESTONE ? 'done' : ''}"><span class="msn">${n}</span><span class="min0"><b>${t}</b><span class="muted"> · ${d}</span></span><span class="pill ${n <= MILESTONE ? 'on' : ''}">${n <= MILESTONE ? 'Done' : 'Coming'}</span></li>`).join('')}</ol></section>`;
   }
 
   /* ---------- Events (activities and reminders) ---------- */
@@ -244,7 +244,7 @@
     const backupAge = S.lastBackup ? Math.floor((Date.now() - new Date(S.lastBackup)) / 864e5) : null;
     return `<div class="view">
       <section class="hero"><div class="eyebrow">${S.family ? esc(S.family) + ' · ' : ''}${schoolLine(s) || 'Today'}</div><h1>${C.fmtLong(s)}</h1>
-        <p class="digest">${digest}</p></section>
+        <p class="digest">${digest}</p>${S.children.length ? '<button class="btn sm" data-act="digest-open" style="margin-top:10px">Daily digest</button>' : ''}</section>
       ${childCards()}
       <div class="cols">
         <div class="stack">
@@ -260,7 +260,7 @@
           </section>
         </div>
         <div class="stack">
-          ${roadmap()}
+          ${approvalsCard()}
           ${backupCard(backupAge)}
           ${S.storage.persisted === false ? `<section class="card warnc"><div class="card-h"><h3>Protect your data</h3></div><p class="small">This browser may clear Family Hub's data when the device runs low on space. Ask it to keep the data, and install the app to your home screen.</p><div class="row" style="margin-top:10px"><button class="btn sm pri" data-act="persist">Keep data on this device</button><button class="btn sm" data-act="nav" data-v="settings">Settings</button></div></section>` : ''}
         </div>
@@ -268,7 +268,8 @@
   }
   function backupCard(age) {
     const msg = age === null ? 'No backup has been made on this device yet.' : age === 0 ? 'Last backup: today.' : `Last backup: ${age} day${age === 1 ? '' : 's'} ago.`;
-    return `<section class="card"><div class="card-h"><h3>Backup</h3></div><p class="small">${msg} A backup is also how you copy your data to your other device.</p><div class="row" style="margin-top:10px"><button class="btn sm" data-act="nav" data-v="settings" data-scroll="backup">Make a backup</button></div></section>`;
+    const due = age === null || age > 7;
+    return `<section class="card${due ? ' warnc' : ''}"><div class="card-h"><h3>${due ? 'Time for a backup' : 'Backup'}</h3></div><p class="small">${msg} A backup is also how you copy your data to your other device.</p><div class="row" style="margin-top:10px"><button class="btn sm" data-act="nav" data-v="settings" data-scroll="backup">Make a backup</button></div></section>`;
   }
 
   function vComing(key) {
@@ -285,6 +286,8 @@
     return `<div class="view">
       <div class="phead">${avatar(c, true)}<div class="min0" style="flex:1"><h1>${esc(c.name)}</h1><div class="muted">${esc(c.grade || '')} · ${colName(c.colour)}</div></div>
         <button class="btn" data-act="child-edit" data-v="${c.id}">Edit</button></div>
+      <section class="card" style="margin-bottom:14px"><div class="card-h"><h3>Today · ${C.fmtDay(C.today())}</h3><button class="btn sm" data-act="only-child" data-v="${c.id}">Week view</button></div>
+        ${(() => { const ev = C.eventsOn(C.today(), src(), { visible: new Set([c.id]) }); return ev.length ? ev.map(e => evRow(e)).join('') : '<p class="empty">Nothing planned today.</p>'; })()}</section>
       <div class="cols">
         <section class="card"><div class="card-h"><h3>Weekly activities</h3><button class="btn sm" data-act="add" data-v="activity" data-child="${c.id}">Add</button></div>
           ${weeklyList(c.id)}</section>
@@ -292,7 +295,7 @@
           ${upcomingReminders(c.id)}</section>
         <section class="card"><div class="card-h"><h3>Homework and projects</h3><button class="btn sm" data-act="add" data-v="task" data-child="${c.id}">Add</button></div>
           ${taskRows(S.tasks.filter(t => t.owner === c.id && !t.done).sort(byDue), true) || '<p class="empty">No open homework or projects.</p>'}</section>
-        <section class="card"><div class="card-h"><h3>Upcoming exams</h3><button class="btn sm" data-act="nav" data-v="study">Study planner</button></div>${examRows(S.exams.filter(x => x.owner === c.id && x.date >= C.today()).sort(byDate).slice(0, 8), true) || '<p class="empty">No exams coming up.</p>'}</section>
+        <section class="card"><div class="card-h"><h3>Upcoming exams</h3><button class="btn sm" data-act="nav" data-v="study">Study planner</button></div>${studyProgress(c.id)}${examRows(S.exams.filter(x => x.owner === c.id && x.date >= C.today()).sort(byDate).slice(0, 8), true) || '<p class="empty">No exams coming up.</p>'}</section>
         ${childMoneyCard(c.id)}
         <section class="card"><div class="card-h"><h3>Chores and reward goals</h3><button class="btn sm" data-act="money-child" data-v="${c.id}">Open</button></div>
           ${S.chores.filter(x => x.owner === c.id).map(x => choreCard(x, true)).join('')}${S.rewards.filter(x => x.owner === c.id).map(rewardCard).join('')}
@@ -1171,6 +1174,92 @@
     toast(`${M.fmt(st.amount)} added to what you owe ${nameOf(c.owner)}.`);
   }
 
+  /* ---------- Milestone 7: daily digest, approvals, help ---------- */
+  /* Chore periods that have ended with a reward still to approve, and reward goals reached. */
+  function approvalsWaiting(childId) {
+    const t = C.today(), out = [];
+    for (const c of S.chores.filter(x => !childId || x.owner === childId)) {
+      let p = K.periodOf(c, t);
+      if (p.end >= t) p = K.periodOf(c, C.addDays(p.start, -1));
+      for (let i = 0; i < 6 && p.end >= c.start && p.end < t; i++) {
+        const st = K.periodStats(c, p);
+        if (st.amount && !st.paid) out.push({ kind: 'chore', c, p, st });
+        if (c.freq === 'Once') break;
+        p = K.periodOf(c, C.addDays(p.start, -1));
+      }
+    }
+    for (const g of S.rewards.filter(x => (!childId || x.owner === childId) && x.count >= x.target && !x.paid)) out.push({ kind: 'reward', g });
+    return out;
+  }
+  function approvalsCard() {
+    const list = approvalsWaiting();
+    if (!list.length) return '';
+    return `<section class="card"><div class="card-h"><h3>Waiting for your approval</h3><button class="btn sm" data-act="nav" data-v="money">Money</button></div>
+      ${list.map(x => x.kind === 'chore'
+        ? `<div class="line" style="--c:var(--${colOf(x.c.owner)})"><span class="min0"><span class="lti">${esc(x.c.title)}</span><span class="sb">${esc(nameOf(x.c.owner))} · ${x.p.label} · ${x.st.done} of ${x.st.occ.length} done</span></span><button class="btn sm pri" data-act="chore-approve" data-v="${x.c.id}|${x.p.start}">Approve ${M.fmt(x.st.amount)}</button></div>`
+        : `<div class="line"><span class="min0"><span class="lti">${esc(x.g.title)}</span><span class="sb">${esc(nameOf(x.g.owner))} · goal reached</span></span><button class="btn sm pri" data-act="reward-approve" data-v="${x.g.id}">Approve</button></div>`).join('')}
+    </section>`;
+  }
+  function studyProgress(childId) {
+    const t = C.today();
+    const ids = new Set(S.exams.filter(x => x.owner === childId && x.date >= t).map(x => x.id));
+    const sess = S.sessions.filter(x => ids.has(x.exam));
+    if (!sess.length) return '';
+    const done = sess.filter(x => x.done).length;
+    return `<div class="prog" style="--c:var(--${colOf(childId)});margin-bottom:6px"><span class="min0"><b>Revision</b> <span class="muted">· for upcoming exams</span></span><span class="muted" style="font-size:13px">${done}/${sess.length} sessions</span><div class="track"><div class="fill" style="width:${Math.round(done / sess.length * 100)}%"></div></div></div>`;
+  }
+
+  /* The morning summary: one block per child, shown on the first open of the day. */
+  function digestFor(id) {
+    const t = C.today(), soon = C.addDays(t, 7);
+    const ev = C.eventsOn(t, src(), { visible: new Set([id]) }).filter(e => !e.skipped && e.kind !== 'step');
+    const overdue = S.tasks.filter(x => x.owner === id && !x.done && x.due < t);
+    const stepsDue = []; for (const x of S.tasks.filter(y => y.owner === id && !y.done)) for (const st of x.steps || []) if (!st.done && st.due && st.due <= t) stepsDue.push(st);
+    const exams = S.exams.filter(x => x.owner === id && x.date > t && x.date <= soon).sort(byDate);
+    const chores = S.chores.filter(c => c.owner === id).map(c => ({ c, d: K.curOcc(c, t) })).filter(({ c, d }) => d && d <= t && K.occEnd(c, d) >= t && !(c.log || {})[d] && !(c.paid || {})[K.periodOf(c, d).key]);
+    const appr = approvalsWaiting(id);
+    const lines = [];
+    if (ev.length) lines.push(`<b>Today:</b> ${ev.map(e => `${e.time ? e.time + ' ' : ''}${esc(e.title)}${e.kind === 'task' ? ' (due)' : ''}`).join(', ')}`);
+    if (overdue.length) lines.push(`<b class="overdue">Overdue:</b> ${overdue.map(x => esc(x.title)).join(', ')}`);
+    if (stepsDue.length) lines.push(`<b>Steps due:</b> ${stepsDue.map(x => esc(x.text)).join(', ')}`);
+    if (exams.length) lines.push(`<b>Exams this week:</b> ${exams.map(x => `${esc(examTitle(x))} ${C.DOW[C.dow(x.date)]} (${C.rel(C.diffDays(t, x.date))})`).join(', ')}`);
+    if (chores.length) lines.push(`<b>Chores to mark:</b> ${chores.map(x => esc(x.c.title)).join(', ')}`);
+    if (appr.length) lines.push(`<b>To approve:</b> ${appr.map(x => x.kind === 'chore' ? `${esc(x.c.title)} ${M.fmt(x.st.amount)}` : esc(x.g.title)).join(', ')}`);
+    return lines;
+  }
+  function digestSheet() {
+    const t = C.today();
+    const blocks = S.children.map(c => ({ c, lines: digestFor(c.id) }));
+    const any = blocks.some(b => b.lines.length);
+    return panel(`Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'}`, `
+      <p class="small" style="margin:6px 0 12px">${C.fmtLong(t)}${schoolLine(t) ? ' · ' + schoolLine(t) : ''}</p>
+      <div class="stack">${blocks.map(({ c, lines }) => `<div class="dig" style="--c:var(--${c.colour})"><div class="row" style="gap:8px;flex-wrap:nowrap">${avatar(c)}<b>${esc(c.name)}</b></div>
+        ${lines.length ? `<ul>${lines.map(l => `<li>${l}</li>`).join('')}</ul>` : '<p class="meta" style="margin-top:6px">Nothing planned today.</p>'}</div>`).join('')}</div>
+      ${any ? '' : '<p class="meta" style="margin-top:8px">A quiet day for everyone.</p>'}
+      <div class="actions" style="margin-top:14px"><button class="btn pri" data-act="digest-close">Got it</button></div>`);
+  }
+  async function maybeDigest() {
+    if (!S.ready || !S.children.length || S.sheet) return;
+    const seen = await data.getSetting('digestSeen', '');
+    if (seen === C.today()) return;
+    if (!S.children.some(c => digestFor(c.id).length)) return;
+    S.sheet = { kind: 'digest' }; renderSheet();
+  }
+
+  function helpCard() {
+    const q = (title, body) => `<details class="help"><summary>${title}</summary><div class="small">${body}</div></details>`;
+    return `<section class="card" id="help"><div class="card-h"><h3>Help</h3></div>
+      ${q('Install on iPhone or iPad', '<ol><li>Open the app\'s address in <b>Safari</b> (not another browser).</li><li>Tap the Share button, then <b>Add to Home Screen</b>, then Add.</li><li>Open Family Hub from the new icon. It then works without internet.</li></ol>')}
+      ${q('Install on Android', '<ol><li>Open the app\'s address in <b>Chrome</b>.</li><li>Tap <b>Install app</b> when it\'s offered, or the ⋮ menu, then <b>Install app</b> or <b>Add to Home screen</b>.</li></ol>')}
+      ${q('Install on a PC or Mac', '<ol><li>Open the app\'s address in Chrome or Edge.</li><li>Click the install icon at the right of the address bar, or the browser menu, then <b>Install Family Hub</b>.</li></ol>')}
+      ${q('How updates arrive', '<p>New versions download in the background while you have internet. The app switches to the new version by itself the next time you open it; your data stays as it is. Settings › About shows the version you have.</p>')}
+      ${q('Make a backup', '<p>Go to Settings › Backup. On a phone or PC that has the app installed, <b>Download backup file</b> saves one file with everything in it; keep it somewhere safe, for example in Google Drive, iCloud or email it to yourself. <b>Copy backup as text</b> works everywhere: paste it into a note. Make one at least once a week; Today reminds you after 7 days.</p>')}
+      ${q('Move data to your other device', '<ol><li>On the device with your data: Settings › Backup › Download backup file (or Copy backup as text).</li><li>Get the file or text to the other device (email, WhatsApp to yourself, or cloud storage).</li><li>On the other device: Settings › Backup › <b>Restore from a backup</b>, choose the file or paste the text, and confirm.</li></ol><p>Restoring replaces everything on that device. Until shared sync arrives in Phase 3, each device keeps its own copy, so pick one device as the main one.</p>')}
+      ${q('A phone is lost, broken or replaced', '<p>Install Family Hub on the new phone, then choose <b>Restore from a backup</b> on the welcome screen and use your latest backup file or text. Anything added after that backup is not in it, which is why a weekly backup matters.</p>')}
+      ${q('Keep the data safe on the device', '<p>Under Settings › Storage, the label should say <b>Kept</b>. If it says "May be cleared", tap <b>Keep data on this device</b>. Installing the app to the home screen also protects the data, especially on iPhone.</p>')}
+    </section>`;
+  }
+
   /* ---------- Calendar ---------- */
   function toggles() {
     const allOn = S.children.every(c => !S.hidden.has(c.id));
@@ -1307,6 +1396,10 @@
         <div class="set"><span><b>Child, view only</b> · own schedule and balances</span><span class="pill">Phase 3</span></div>
         <div class="set"><span><b>Child, limited edit</b> · tick off tasks, add homework, suggest IOUs for approval</span><span class="pill">Phase 3</span></div>
       </section>
+
+      ${helpCard()}
+
+      ${roadmap()}
 
       <section class="card"><div class="card-h"><h3>About</h3></div>
         <p class="meta">Family Hub beta ${VERSION} · milestone ${MILESTONE} of 7${inFrame ? ' · test link' : ''}</p>
@@ -1528,7 +1621,7 @@
     el.innerHTML = k === 'child' ? childSheet() : k === 'restore' ? restoreSheet() : k === 'activity' ? activitySheet()
       : k === 'reminder' ? reminderSheet() : k === 'event' ? eventSheet() : k === 'task' ? taskSheet() : k === 'taskview' ? taskViewSheet()
       : k === 'period' ? periodSheet() : k === 'exam' ? examSheet() : k === 'session' ? sessionSheet()
-      : k === 'account' ? accountSheet() : k === 'entry' ? entrySheet() : k === 'goal' ? goalSheet() : k === 'ledger' ? ledgerSheet() : k === 'settle' ? settleSheet() : k === 'reach' ? reachSheet() : k === 'chore' ? choreSheet() : k === 'reward' ? rewardSheet() : k === 'term' ? termSheet() : dayoffSheet();
+      : k === 'account' ? accountSheet() : k === 'entry' ? entrySheet() : k === 'goal' ? goalSheet() : k === 'ledger' ? ledgerSheet() : k === 'settle' ? settleSheet() : k === 'reach' ? reachSheet() : k === 'chore' ? choreSheet() : k === 'digest' ? digestSheet() : k === 'reward' ? rewardSheet() : k === 'term' ? termSheet() : dayoffSheet();
     el.hidden = false;
   }
 
@@ -2005,6 +2098,10 @@
           toast(`Reward approved${g.bonus ? `. ${M.fmt(g.bonus)} added to what you owe ${nameOf(g.owner)}` : ''}${g.extra ? `. Also: ${g.extra}` : ''}.`);
           return;
         }
+        /* digest and shortcuts */
+        case 'digest-open': S.sheet = { kind: 'digest' }; renderSheet(); return;
+        case 'digest-close': S.sheet = null; renderSheet(); await data.setSetting('digestSeen', C.today()); return;
+        case 'only-child': S.hidden = new Set(S.children.filter(c => c.id !== v).map(c => c.id)); S.cal.mode = 'week'; S.cal.cursor = C.today(); saveCalPrefs(); go('calendar'); return;
         case 'install': if (S.installEvt) { S.installEvt.prompt(); const r = await S.installEvt.userChoice; S.installEvt = null; render(); if (r.outcome === 'accepted') toast('Family Hub is being installed.'); } return;
         default: return;
       }
@@ -2093,7 +2190,15 @@
       S.error = e && e.message ? e.message : String(e);
     }
     render();
+    maybeDigest();
   })();
+  /* When the app comes back to the front on a new day, refresh and show that day's digest. */
+  let lastDay = C.today();
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible' || !S.ready || C.today() === lastDay) return;
+    lastDay = C.today(); S.cal.cursor = lastDay; S.cal.sel = lastDay;
+    await load(); render(); maybeDigest();
+  });
 
   FH.app = { S, render, version: VERSION };
 })();
