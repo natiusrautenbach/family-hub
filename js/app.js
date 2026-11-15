@@ -8,7 +8,7 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '0.6.0';
+  const VERSION = '0.6.1';
   const MILESTONE = 6;
 
   /* ---------- Small helpers ---------- */
