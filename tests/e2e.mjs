@@ -94,7 +94,7 @@ try {
   ok(await pw.evaluate(() => FH.sync.status().waiting) === 0, 'outbox empties once sent');
 
   await pg.click('[data-act=nav][data-v=settings] >> visible=true');
-  await pg.waitForFunction(() => (FH.app.S.members || []).length === 2, null, { timeout: 15000 }).catch(() => {});
+  await pg.waitForFunction(() => (document.querySelector('#people') || {}).innerText?.includes('Wife'), null, { timeout: 15000 }).catch(() => {});
   ok((await pg.innerText('#people')).includes('Wife'), 'family card lists both people');
   await pg.evaluate(() => { const r = FH.app.S.reminders.find(x => x.title === 'Swimming gala'); FH.app.S.sheet = { kind: 'reminder', id: r.id }; FH.app.render(); });
   ok((await pg.innerText('#sheet')).includes('Last changed by Wife'), 'form shows who last changed it');
