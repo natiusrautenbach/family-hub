@@ -1,15 +1,15 @@
 /* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Family Hub · app (beta, milestone 5)
+/* Family Hub · app (beta, milestone 6)
    Screens: first-time setup, Today, Calendar (activities, reminders, school
    terms, tasks, exams, study), Tasks, Study planner, Money (accounts, savings
-   goals, money owed), child pages, Settings. Chores follow in milestone 6. */
+   goals, money owed, chores, reward goals), child pages, Settings. */
 (function () {
   'use strict';
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '0.5.1';
-  const MILESTONE = 5;
+  const VERSION = '0.6.0';
+  const MILESTONE = 6;
 
   /* ---------- Small helpers ---------- */
   const $ = s => document.querySelector(s);
@@ -59,6 +59,7 @@
     kinds: new Set(['act', 'rem', 'task', 'study']), // item types shown on the calendar
     tasks: [], taskFilter: 'open', openTask: null,
     periods: [], exams: [], sessions: [], study: { period: null, tab: 'exams', imp: null },
+    chores: [], rewards: [], choreView: {},
     accounts: [], entries: [], goals: [], ledger: [], moneyChild: null, editBal: null, editAlloc: null, histAll: {}, ledgerHist: false,
     cal: { mode: 'week', cursor: C.today(), sel: C.today() },
     pastTerms: false,
@@ -110,6 +111,8 @@
     S.entries = (await data.list('entries')).filter(e => aids.has(e.account));
     S.goals = (await data.list('goals')).filter(g => aids.has(g.account)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.createdAt || '').localeCompare(b.createdAt || ''));
     S.ledger = (await data.list('ledger')).filter(l => kids.has(l.owner));
+    S.chores = (await data.list('chores')).filter(c => kids.has(c.owner)).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+    S.rewards = (await data.list('rewards')).filter(g => kids.has(g.owner)).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
     if (!kids.has(S.moneyChild)) S.moneyChild = S.children[0]?.id || null;
     if (!S.periods.some(p => p.id === S.study.period)) S.study.period = periodsSorted()[0]?.id || null;
     S.terms = await data.list('terms');
@@ -251,6 +254,7 @@
           </section>
           ${dueSoonCard()}
           ${examCountdownCard()}
+          ${choresTodayCard()}
           <section class="card"><div class="card-h"><h3>Reminders this week</h3><button class="btn sm" data-act="add" data-v="reminder">Add reminder</button></div>
             ${soon.length ? soon.map(e => evRow(e, true)).join('') : '<p class="empty">No reminders in the next seven days.</p>'}
           </section>
@@ -290,6 +294,9 @@
           ${taskRows(S.tasks.filter(t => t.owner === c.id && !t.done).sort(byDue), true) || '<p class="empty">No open homework or projects.</p>'}</section>
         <section class="card"><div class="card-h"><h3>Upcoming exams</h3><button class="btn sm" data-act="nav" data-v="study">Study planner</button></div>${examRows(S.exams.filter(x => x.owner === c.id && x.date >= C.today()).sort(byDate).slice(0, 8), true) || '<p class="empty">No exams coming up.</p>'}</section>
         ${childMoneyCard(c.id)}
+        <section class="card"><div class="card-h"><h3>Chores and reward goals</h3><button class="btn sm" data-act="money-child" data-v="${c.id}">Open</button></div>
+          ${S.chores.filter(x => x.owner === c.id).map(x => choreCard(x, true)).join('')}${S.rewards.filter(x => x.owner === c.id).map(rewardCard).join('')}
+          ${!S.chores.some(x => x.owner === c.id) && !S.rewards.some(x => x.owner === c.id) ? '<p class="empty">No chores or reward goals yet.</p>' : ''}</section>
       </div></div>`;
   }
 
@@ -763,9 +770,9 @@
             <button class="min0 slink" data-act="led-edit" data-v="${l.id}"><span class="lti">${esc(l.note)}</span><span class="sb">${C.fmtDay(l.date)} · ${l.dir === 'owes' ? `${esc(kid.name)} owes you` : `You owe ${esc(kid.name)}`}${paid ? ` · ${M.fmt(paid)} of ${M.fmt(l.amount)} paid` : ''}</span></button>
             <span class="row" style="gap:8px;flex-wrap:nowrap"><span class="amt ${l.dir === 'owes' ? 'pos' : 'neg'}">${M.fmt(left)}</span><button class="btn sm" data-act="led-settle" data-v="${l.id}">Settle</button></span></div>`; }).join('') || '<p class="empty">Nothing owed either way.</p>'}
           ${settled.length ? `<details class="pastsess" ${S.ledgerHist ? 'open' : ''}><summary data-act="led-hist">Settled (${settled.length})</summary>${settled.map(l => `<div class="line"><button class="min0 slink struck" data-act="led-edit" data-v="${l.id}"><span class="lti">${esc(l.note)}</span><span class="sb">${C.fmtDay(l.date)}${l.settledAt ? ` · settled ${C.fmtDay(l.settledAt)}` : ''}</span></button><span class="amt muted">${M.fmt(l.amount)}</span></div>`).join('')}</details>` : ''}
-          <p class="meta" style="margin-top:10px">Chores and reward goals will add to "You owe" from milestone 6.</p>
         </section>
-      </div></div>`;
+      </div>
+      ${choresSection(id)}</div>`;
   }
 
   function accountCard(a) {
@@ -1030,6 +1037,138 @@
     if (diff) await data.save('entries', { owner: a.owner, account: a.id, date: C.today(), amount: diff, type: 'Adjustment', note: 'Balance edited' });
     await load(); render();
     toast(diff ? `Balance updated to ${M.fmt(v)}. Adjustment of ${M.fmtSigned(diff)} recorded.` : 'The balance is unchanged.');
+  }
+
+  /* ---------- Chores and reward goals ---------- */
+  const K = FH.chores;
+  function choreCard(c, compact) {
+    const today = C.today();
+    const view = S.choreView[c.id] || today;
+    const r = K.periodOf(c, view);
+    const st = K.periodStats(c, r);
+    const cur = K.curOcc(c, today);
+    const showMark = cur && cur >= r.start && cur <= r.end && !st.paid;
+    const hist = [];
+    if (c.freq !== 'Once' && !compact) { let p = K.periodOf(c, today); for (let i = 0; i < 4 && p.end >= c.start; i++) { hist.push(p); p = K.periodOf(c, C.addDays(p.start, -1)); } }
+    return `<div class="chore" style="--c:var(--${colOf(c.owner)})">
+      <div class="row" style="justify-content:space-between;flex-wrap:nowrap;align-items:flex-start"><button class="min0 slink" data-act="chore-edit" data-v="${c.id}"><b>${esc(c.title)}</b><span class="sb">${compact ? esc(nameOf(c.owner)) + ' · ' : ''}${c.freq} · ${M.fmt(c.reward)} ${K.PER_LBL[c.period]} · ${c.rule === 'all' ? 'paid only if all done' : 'paid for what was done'}</span></button></div>
+      ${showMark ? `<div class="row" style="gap:6px"><span class="meta" style="min-width:84px">${K.CUR_LBL[c.freq]}</span><button class="btn sm ok" data-act="chore-mark" data-v="${c.id}|done" aria-pressed="${(c.log || {})[cur] === 'done'}">Mark done</button><button class="btn sm no" data-act="chore-mark" data-v="${c.id}|missed" aria-pressed="${(c.log || {})[cur] === 'missed'}">Mark not done</button></div>` : ''}
+      ${compact ? '' : `<div class="row" style="justify-content:space-between;gap:8px">
+        <div class="row" style="gap:6px;flex-wrap:nowrap">${c.freq === 'Once' ? '' : `<button class="iconbtn sm" data-act="chore-prev" data-v="${c.id}" aria-label="Previous period" ${r.start <= c.start ? 'disabled' : ''}>${ic('left')}</button>`}<b style="font-size:14px">${r.label}</b>${c.freq === 'Once' ? '' : `<button class="iconbtn sm" data-act="chore-next" data-v="${c.id}" aria-label="Next period" ${r.end >= today ? 'disabled' : ''}>${ic('right')}</button>`}</div>
+        <span class="meta">${st.done} of ${st.occ.length} done${st.missed ? ` · ${st.missed} not done` : ''}</span></div>
+      <div class="chips">${st.occ.map(d => { const s2 = (c.log || {})[d]; return `<button class="chip ${s2 || ''}" data-act="chore-occ" data-v="${c.id}|${d}" ${d > today || st.paid ? 'disabled' : ''} aria-label="${K.occLabel(c, d)}: ${s2 === 'done' ? 'done' : s2 === 'missed' ? 'not done' : 'not marked'}">${s2 === 'done' ? '✓ ' : s2 === 'missed' ? '✗ ' : ''}${K.occLabel(c, d)}</button>`; }).join('') || '<span class="meta">Nothing due in this period.</span>'}</div>
+      <div class="row" style="justify-content:space-between;gap:8px">
+        <span class="meta">${r.end > today && c.freq !== 'Once' ? `Period ends ${C.fmtDay(r.end)}` : ''}</span>
+        ${st.paid ? `<span class="pill on">Approved ${M.fmt(st.paid.amount)}</span>` : st.amount ? `<button class="btn sm pri" data-act="chore-approve" data-v="${c.id}|${r.start}">Approve ${M.fmt(st.amount)}</button>` : `<span class="pill">${c.rule === 'all' && st.done && st.done < st.occ.length ? 'Not all done' : 'Nothing earned yet'}</span>`}
+      </div>
+      ${hist.length > 1 ? `<div class="hist">${hist.map(h => { const s3 = K.periodStats(c, h); return `<button data-act="chore-view" data-v="${c.id}|${h.start}" aria-current="${h.key === r.key}"><span>${h.label}</span><span>${s3.done} of ${s3.occ.length} done${s3.paid ? ` · approved ${M.fmt(s3.paid.amount)}` : ''}</span></button>`; }).join('')}</div>` : ''}`}
+    </div>`;
+  }
+  function rewardCard(g) {
+    const reached = g.count >= g.target;
+    const prize = [g.bonus ? M.fmt(g.bonus) : '', g.extra].filter(Boolean).join(' + ');
+    return `<div class="chore" style="--c:var(--${colOf(g.owner)})">
+      <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:nowrap"><button class="min0 slink" data-act="reward-edit" data-v="${g.id}"><b>${esc(g.title)}</b><span class="sb">Reward: ${esc(prize)}</span></button>
+        <div class="row" style="flex-wrap:nowrap;gap:6px"><button class="iconbtn sm" data-act="reward-minus" data-v="${g.id}" aria-label="Take one off" ${g.count && !g.paid ? '' : 'disabled'}>−</button><button class="btn sm" data-act="reward-plus" data-v="${g.id}" ${reached ? 'disabled' : ''}>+1</button></div></div>
+      <div class="goal" style="margin:0"><div class="track"><div class="fill" style="width:${Math.min(100, g.target ? g.count / g.target * 100 : 0)}%"></div></div>
+        <div class="row" style="justify-content:space-between"><span class="meta">${g.count} of ${g.target} ${esc(g.unit || '')}${(g.log || []).length ? ` · last on ${C.fmtDay(g.log[g.log.length - 1])}` : ''}</span>${g.paid ? '<span class="pill on">Reward approved</span>' : reached ? `<button class="btn sm pri" data-act="reward-approve" data-v="${g.id}">Approve reward</button>` : `<span class="meta">${g.target - g.count} to go</span>`}</div></div>
+    </div>`;
+  }
+  function choresSection(id) {
+    const chores = S.chores.filter(c => c.owner === id && !c.archived);
+    const rewards = S.rewards.filter(g => g.owner === id);
+    return `<div class="mgrid" style="margin-top:14px">
+      <section class="card"><div class="card-h"><h3>Chores</h3><button class="btn sm" data-act="chore-add">Add chore</button></div>
+        ${chores.map(c => choreCard(c)).join('') || '<p class="empty">No chores yet.</p>'}
+        <p class="meta" style="margin-top:10px">Mark each day, week or month done or not done; tap a chip to change it. Approving a period adds its reward to "You owe".</p></section>
+      <section class="card"><div class="card-h"><h3>Reward goals</h3><button class="btn sm" data-act="reward-add">Add goal</button></div>
+        ${rewards.map(rewardCard).join('') || '<p class="empty">No reward goals yet, for example "Read 10 books".</p>'}
+        <p class="meta" style="margin-top:10px">Count progress towards a target. When it's reached, approve the reward.</p></section>
+    </div>`;
+  }
+  function choresTodayCard() {
+    const t = C.today();
+    const due = S.chores.filter(c => !c.archived).map(c => ({ c, d: K.curOcc(c, t) })).filter(({ c, d }) => d && d <= t && K.occEnd(c, d) >= t && !(c.log || {})[d] && !(c.paid || {})[K.periodOf(c, d).key]);
+    if (!due.length) return '';
+    return `<section class="card"><div class="card-h"><h3>Chores to mark</h3><button class="btn sm" data-act="nav" data-v="money">Money</button></div>
+      ${due.map(({ c, d }) => `<div class="line" style="--c:var(--${colOf(c.owner)})"><span class="min0"><span class="lti">${esc(c.title)}</span><span class="sb">${esc(nameOf(c.owner))} · ${K.CUR_LBL[c.freq].toLowerCase()}${c.freq !== 'Daily' && c.freq !== 'Once' ? ` (until ${C.fmtDay(K.occEnd(c, d))})` : ''}</span></span>
+        <span class="row" style="gap:6px;flex-wrap:nowrap"><button class="btn sm ok" data-act="chore-mark" data-v="${c.id}|done">Done</button><button class="btn sm no" data-act="chore-mark" data-v="${c.id}|missed">Not done</button></span></div>`).join('')}
+    </section>`;
+  }
+
+  function choreSheet() {
+    const sh = S.sheet;
+    const c = sh.id ? S.chores.find(x => x.id === sh.id) : null;
+    const opt = (list, cur, lbl) => list.map(o => `<option value="${o}" ${o === cur ? 'selected' : ''}>${lbl ? lbl(o) : o}</option>`).join('');
+    return panel(c ? `Edit ${esc(c.title)}` : 'Add a chore', `
+      <form class="form" data-form="chore" style="margin-top:14px">
+        ${childSelect(c ? c.owner : sh.child)}
+        <label>Frequency<select id="f-freq">${opt(K.FREQS, c?.freq || 'Daily')}</select></label>
+        <label class="full">Chore<input id="f-title" value="${esc(c?.title || '')}" placeholder="e.g. Feed the dog" autocomplete="off"></label>
+        <label>Reward (R)<input id="f-amount" inputmode="decimal" value="${c ? M.toInput(c.reward) : ''}" placeholder="e.g. 35" autocomplete="off"></label>
+        <label>Reward period<select id="f-period">${opt(['Daily', 'Weekly', 'Monthly'], c?.period || 'Weekly', o => ({ Daily: 'Per day', Weekly: 'Per week', Monthly: 'Per month' }[o]))}</select></label>
+        <label>Pay out<select id="f-rule">${opt(['prorata', 'all'], c?.rule || 'prorata', o => o === 'all' ? 'Only if all done' : 'For what was done')}</select></label>
+        <label>Starts${'' /* for a one-off chore this is the due date */}<input id="f-date" type="date" value="${c?.start || C.today()}"></label>
+        <p class="hint full">Example: a daily chore paid per week is marked each day and approved once a week. For a chore done once, Starts is the due date.</p>
+        <div class="err full" id="f-err" role="alert"></div>
+        <div class="actions full">${c ? delBtn(sh, 'this chore') : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${c ? 'Save' : 'Add chore'}</button></div>
+      </form>`);
+  }
+  function rewardSheet() {
+    const sh = S.sheet;
+    const g = sh.id ? S.rewards.find(x => x.id === sh.id) : null;
+    return panel(g ? `Edit ${esc(g.title)}` : 'Add a reward goal', `
+      <form class="form" data-form="reward" style="margin-top:14px">
+        ${childSelect(g ? g.owner : sh.child)}
+        <label>Target<input id="f-target" inputmode="numeric" value="${g?.target || ''}" placeholder="e.g. 10" autocomplete="off"></label>
+        <label class="full">Goal<input id="f-title" value="${esc(g?.title || '')}" placeholder="e.g. Read 10 books" autocomplete="off"></label>
+        <label>Counted in<input id="f-unit" value="${esc(g?.unit || '')}" placeholder="e.g. books" autocomplete="off"></label>
+        <label>Done so far<input id="f-count" inputmode="numeric" value="${g?.count ?? 0}" autocomplete="off"></label>
+        <label>Bonus (R, optional)<input id="f-amount" inputmode="decimal" value="${g?.bonus ? M.toInput(g.bonus) : ''}" placeholder="e.g. 100" autocomplete="off"></label>
+        <label>Other reward (optional)<input id="f-extra" value="${esc(g?.extra || '')}" placeholder="e.g. Trip to the bookshop" autocomplete="off"></label>
+        <div class="err full" id="f-err" role="alert"></div>
+        <div class="actions full">${g ? delBtn(sh, 'this reward goal') : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${g ? 'Save' : 'Add goal'}</button></div>
+      </form>`);
+  }
+  async function saveChore() {
+    const sh = S.sheet;
+    const title = val('#f-title'), freq = val('#f-freq'), reward = amt('#f-amount'), start = val('#f-date');
+    const period = freq === 'Once' ? 'Once' : val('#f-period');
+    if (!title) return fail('Name the chore, for example Feed the dog.');
+    if (!(reward > 0)) return fail('Enter the reward in rand, for example 35 or 12,50.');
+    if (!K.PER_OK[freq].includes(period)) return fail(`A ${freq.toLowerCase()} chore can only be rewarded ${K.PER_OK[freq].map(x => K.PER_LBL[x]).join(' or ')}. Change the reward period.`);
+    if (!C.isDate(start)) return fail('Choose the start date.');
+    const rec = { owner: val('#f-child'), title, freq, period, reward, rule: val('#f-rule'), start };
+    if (sh.id) rec.id = sh.id; else { rec.log = {}; rec.paid = {}; }
+    await data.save('chores', rec);
+    S.sheet = null; S.moneyChild = rec.owner; await load(); render();
+    toast(sh.id ? 'Chore saved.' : `${title} added for ${nameOf(rec.owner)}: ${M.fmt(reward)} ${K.PER_LBL[period]}.`);
+    return true;
+  }
+  async function saveReward() {
+    const sh = S.sheet;
+    const title = val('#f-title'), target = parseInt(val('#f-target'), 10), count = parseInt(val('#f-count') || '0', 10), extra = val('#f-extra');
+    const bonus = val('#f-amount') ? amt('#f-amount') : 0;
+    if (!title) return fail('Name the goal, for example Read 10 books.');
+    if (!(target > 0)) return fail('Enter the target number, for example 10.');
+    if (Number.isNaN(bonus) || bonus < 0) return fail('Enter the bonus in rand, for example 100, or leave it empty.');
+    if (!bonus && !extra) return fail('Add a bonus amount, another reward, or both.');
+    if (!(count >= 0)) return fail('Done so far must be 0 or more.');
+    const rec = { owner: val('#f-child'), title, target, unit: val('#f-unit') || 'times', count: Math.min(target, count), bonus, extra };
+    if (sh.id) rec.id = sh.id; else { rec.log = []; rec.paid = null; }
+    await data.save('rewards', rec);
+    S.sheet = null; S.moneyChild = rec.owner; await load(); render();
+    toast(sh.id ? 'Reward goal saved.' : `Reward goal added: ${title}.`);
+    return true;
+  }
+  async function approveChore(id, d) {
+    const c = S.chores.find(x => x.id === id);
+    const r = K.periodOf(c, d), st = K.periodStats(c, r);
+    if (!st.amount || st.paid) return;
+    const led = await data.save('ledger', { owner: c.owner, dir: 'owe', amount: st.amount, date: C.today(), note: `Chore: ${c.title}, ${r.label.replace(/^Week of/, 'week of')} (${st.done} of ${st.occ.length} done)`, payments: [], settledAt: '' });
+    await data.save('chores', { id: c.id, paid: { ...(c.paid || {}), [r.key]: { amount: st.amount, date: C.today(), ledger: led.id } } });
+    await load(); render();
+    toast(`${M.fmt(st.amount)} added to what you owe ${nameOf(c.owner)}.`);
   }
 
   /* ---------- Calendar ---------- */
@@ -1389,7 +1528,7 @@
     el.innerHTML = k === 'child' ? childSheet() : k === 'restore' ? restoreSheet() : k === 'activity' ? activitySheet()
       : k === 'reminder' ? reminderSheet() : k === 'event' ? eventSheet() : k === 'task' ? taskSheet() : k === 'taskview' ? taskViewSheet()
       : k === 'period' ? periodSheet() : k === 'exam' ? examSheet() : k === 'session' ? sessionSheet()
-      : k === 'account' ? accountSheet() : k === 'entry' ? entrySheet() : k === 'goal' ? goalSheet() : k === 'ledger' ? ledgerSheet() : k === 'settle' ? settleSheet() : k === 'reach' ? reachSheet() : k === 'term' ? termSheet() : dayoffSheet();
+      : k === 'account' ? accountSheet() : k === 'entry' ? entrySheet() : k === 'goal' ? goalSheet() : k === 'ledger' ? ledgerSheet() : k === 'settle' ? settleSheet() : k === 'reach' ? reachSheet() : k === 'chore' ? choreSheet() : k === 'reward' ? rewardSheet() : k === 'term' ? termSheet() : dayoffSheet();
     el.hidden = false;
   }
 
@@ -1629,7 +1768,7 @@
           for (const x of S.activities.filter(r => r.owner === sh.id)) await data.remove('activities', x.id);
           for (const x of S.reminders.filter(r => r.owner === sh.id)) await data.remove('reminders', x.id);
           for (const x of S.tasks.filter(r => r.owner === sh.id)) await data.remove('tasks', x.id);
-          for (const st of ['sessions', 'exams', 'periods', 'entries', 'goals', 'accounts', 'ledger']) for (const x of S[st].filter(r => r.owner === sh.id)) await data.remove(st, x.id);
+          for (const st of ['sessions', 'exams', 'periods', 'entries', 'goals', 'accounts', 'ledger', 'chores', 'rewards']) for (const x of S[st].filter(r => r.owner === sh.id)) await data.remove(st, x.id);
           await data.remove('people', sh.id);
           S.sheet = null; await load();
           if (S.view === 'child' && S.child === sh.id) go('today'); else render();
@@ -1734,8 +1873,8 @@
         case 'rec-del': {
           const sh = S.sheet;
           if (!sh.confirm) { sh.confirm = true; b.classList.add('armed'); b.textContent = 'Tap again to delete'; return; }
-          const store = { activity: 'activities', reminder: 'reminders', term: 'terms', dayoff: 'daysoff', task: 'tasks', exam: 'exams', session: 'sessions', period: 'periods', account: 'accounts', entry: 'entries', goal: 'goals', ledger: 'ledger' }[sh.kind];
-          const list = { activity: S.activities, reminder: S.reminders, term: S.terms, dayoff: S.daysoff, task: S.tasks, exam: S.exams, session: S.sessions, period: S.periods, account: S.accounts, entry: S.entries, goal: S.goals, ledger: S.ledger }[sh.kind];
+          const store = { activity: 'activities', reminder: 'reminders', term: 'terms', dayoff: 'daysoff', task: 'tasks', exam: 'exams', session: 'sessions', period: 'periods', account: 'accounts', entry: 'entries', goal: 'goals', ledger: 'ledger', chore: 'chores', reward: 'rewards' }[sh.kind];
+          const list = { activity: S.activities, reminder: S.reminders, term: S.terms, dayoff: S.daysoff, task: S.tasks, exam: S.exams, session: S.sessions, period: S.periods, account: S.accounts, entry: S.entries, goal: S.goals, ledger: S.ledger, chore: S.chores, reward: S.rewards }[sh.kind];
           if (sh.kind === 'account') for (const st of ['entries', 'goals']) for (const x of S[st].filter(r => r.account === sh.id)) await data.remove(st, x.id);
           if (sh.kind === 'period') for (const st of ['sessions', 'exams']) for (const x of S[st].filter(r => r.period === sh.id)) await data.remove(st, x.id);
           if (sh.kind === 'exam') for (const x of S.sessions.filter(r => r.exam === sh.id && !r.done)) await data.remove('sessions', x.id);
@@ -1823,6 +1962,49 @@
           await data.save('ledger', { id: l.id, payments, settledAt: M.paidOf({ payments }) >= l.amount ? l.settledAt : '' });
           await load(); renderSheet(); render(); toast('Payment removed.'); return;
         }
+        /* chores and reward goals */
+        case 'chore-add': S.sheet = { kind: 'chore', child: S.view === 'child' ? S.child : S.moneyChild || S.children[0]?.id }; renderSheet(); setTimeout(() => $('#f-title')?.focus(), 30); return;
+        case 'chore-edit': S.sheet = { kind: 'chore', id: v }; renderSheet(); return;
+        case 'chore-mark': {
+          const [cid, st] = v.split('|'); const c = S.chores.find(x => x.id === cid);
+          const d = K.curOcc(c, C.today()); if (!d) return;
+          const log = { ...(c.log || {}) }; if (log[d] === st) delete log[d]; else log[d] = st;
+          await data.save('chores', { id: c.id, log }); await load(); render();
+          if (log[d]) toast(`${c.title}: ${st === 'done' ? 'done' : 'not done'}.`);
+          return;
+        }
+        case 'chore-occ': {
+          const [cid, d] = v.split('|'); const c = S.chores.find(x => x.id === cid);
+          const log = { ...(c.log || {}) }; const cur = log[d];
+          if (!cur) log[d] = 'done'; else if (cur === 'done') log[d] = 'missed'; else delete log[d];
+          await data.save('chores', { id: c.id, log }); await load(); render(); return;
+        }
+        case 'chore-prev': case 'chore-next': {
+          const c = S.chores.find(x => x.id === v); const r = K.periodOf(c, S.choreView[c.id] || C.today());
+          let nv = a === 'chore-prev' ? C.addDays(r.start, -1) : C.addDays(r.end, 1); if (nv > C.today()) nv = C.today();
+          S.choreView[c.id] = nv; render(); return;
+        }
+        case 'chore-view': { const [cid, d] = v.split('|'); S.choreView[cid] = d; render(); return; }
+        case 'chore-approve': { const [cid, d] = v.split('|'); await approveChore(cid, d); return; }
+        case 'reward-add': S.sheet = { kind: 'reward', child: S.view === 'child' ? S.child : S.moneyChild || S.children[0]?.id }; renderSheet(); setTimeout(() => $('#f-title')?.focus(), 30); return;
+        case 'reward-edit': S.sheet = { kind: 'reward', id: v }; renderSheet(); return;
+        case 'reward-plus': case 'reward-minus': {
+          const g = S.rewards.find(x => x.id === v); const log = [...(g.log || [])];
+          let count = g.count;
+          if (a === 'reward-plus' && count < g.target) { count++; log.push(C.today()); }
+          if (a === 'reward-minus' && count > 0 && !g.paid) { count--; log.pop(); }
+          await data.save('rewards', { id: g.id, count, log }); await load(); render();
+          if (a === 'reward-plus' && count === g.target) toast(`${nameOf(g.owner)} reached the goal. Approve the reward when you're ready.`);
+          return;
+        }
+        case 'reward-approve': {
+          const g = S.rewards.find(x => x.id === v); if (g.paid) return;
+          let ledger = '';
+          if (g.bonus) ledger = (await data.save('ledger', { owner: g.owner, dir: 'owe', amount: g.bonus, date: C.today(), note: `Reward: ${g.title}`, payments: [], settledAt: '' })).id;
+          await data.save('rewards', { id: g.id, paid: { date: C.today(), ledger } }); await load(); render();
+          toast(`Reward approved${g.bonus ? `. ${M.fmt(g.bonus)} added to what you owe ${nameOf(g.owner)}` : ''}${g.extra ? `. Also: ${g.extra}` : ''}.`);
+          return;
+        }
         case 'install': if (S.installEvt) { S.installEvt.prompt(); const r = await S.installEvt.userChoice; S.installEvt = null; render(); if (r.outcome === 'accepted') toast('Family Hub is being installed.'); } return;
         default: return;
       }
@@ -1843,6 +2025,8 @@
       if (f === 'entry') await saveEntry();
       if (f === 'goal') await saveGoal();
       if (f === 'reach') await saveReach();
+      if (f === 'chore') await saveChore();
+      if (f === 'reward') await saveReward();
       if (f === 'ledger') await saveLedger();
       if (f === 'settle') await saveSettle();
       if (f === 'exam') await saveExam();

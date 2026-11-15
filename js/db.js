@@ -10,7 +10,7 @@
   const FH = (window.FH = window.FH || {});
 
   const DB_NAME = 'family-hub';
-  const DB_VERSION = 5;
+  const DB_VERSION = 6;
   const BACKUP_FORMAT = 1;
 
   /* Each milestone adds stores by raising DB_VERSION and adding to this map;
@@ -32,6 +32,8 @@
     entries:    { indexes: ['owner', 'account', 'date'] }, // milestone 5: deposits, withdrawals, adjustments
     goals:      { indexes: ['owner', 'account'] },      // milestone 5: savings goals, a share of an account
     ledger:     { indexes: ['owner', 'date'] },         // milestone 5: money owed either way
+    chores:     { indexes: ['owner'] },                 // milestone 6: chores with their done/not-done log and payouts
+    rewards:    { indexes: ['owner'] },                 // milestone 6: reward goals (count towards a target)
   };
 
   const now = () => new Date().toISOString();
@@ -115,6 +117,8 @@
       entries: ['read:own'],
       goals: ['read:own'],
       ledger: ['read:own'],
+      chores: ['read:own'],
+      rewards: ['read:own'],
     },
     child_limited: {
       people: ['read:own'],
@@ -130,6 +134,8 @@
       entries: ['read:own'],
       goals: ['read:own'],
       ledger: ['read:own'],
+      chores: ['read:own'],
+      rewards: ['read:own'],
       approvals: ['read:own', 'create:own'],
     },
   };

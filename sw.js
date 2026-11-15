@@ -3,9 +3,9 @@
    Files are fetched fresh (not from the browser cache) when a new version installs.
    Keeps the app's own files on the device so it opens without internet.
    Raise VERSION with every release so devices pick up the new files. */
-const VERSION = 'fh-0.5.1';
+const VERSION = 'fh-0.6.0';
 const SHELL = [
-  './', 'index.html', 'css/app.css', 'js/db.js', 'js/cal.js', 'js/study.js', 'js/money.js', 'js/app.js', 'manifest.webmanifest',
+  './', 'index.html', 'css/app.css', 'js/db.js', 'js/cal.js', 'js/study.js', 'js/money.js', 'js/chores.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
 ];
 const FONTS = 'fh-fonts';
