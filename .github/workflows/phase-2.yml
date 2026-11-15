@@ -54,6 +54,8 @@ jobs:
           SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
           if [ -n "$SA" ]; then echo "ready=yes" >> "$GITHUB_OUTPUT"; else echo "::notice::No deploy key yet (secret FIREBASE_SERVICE_ACCOUNT). Tests passed; nothing published."; fi
+      - name: List the files in the folder
+        run: find . -type f -not -path './.git/*' | sort
       - name: Publish app and rules to Firebase
         if: steps.key.outputs.ready == 'yes'
         env:
@@ -63,3 +65,13 @@ jobs:
           export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
           npx --yes firebase-tools@13 deploy --only hosting,firestore:rules --project herding-cats-1e399 --non-interactive
           rm -f "$RUNNER_TEMP/sa.json"
+      - name: Check the live site serves this version
+        if: steps.key.outputs.ready == 'yes'
+        run: |
+          want=$(grep -o "const VERSION = '[^']*'" js/app.js)
+          for i in 1 2 3 4 5 6; do
+            got=$(curl -fsS "https://herding-cats-1e399.web.app/js/app.js?check=$GITHUB_RUN_ID" | grep -o "const VERSION = '[^']*'" || true)
+            if [ "$got" = "$want" ]; then echo "Live site OK: $got"; curl -fsS -o /dev/null -w "Home page: %{http_code}\n" https://herding-cats-1e399.web.app/; exit 0; fi
+            sleep 10
+          done
+          echo "::error::Live site does not show $want (got: $got)"; exit 1
