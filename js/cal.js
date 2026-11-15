@@ -1,5 +1,5 @@
-/* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Family Hub · dates, school calendar and repeat rules
+/* Herding Cats · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
+/* Herding Cats · dates, school calendar and repeat rules
    Pure functions: no screen code and no database access. */
 (function () {
   'use strict';

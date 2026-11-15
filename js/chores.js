@@ -1,5 +1,5 @@
-/* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Family Hub · chores logic
+/* Herding Cats · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
+/* Herding Cats · chores logic
    Frequency = how often a chore must be done. Reward period = how often the
    reward is approved (a daily chore can be paid weekly or monthly). Each
    occurrence is marked done or not done; the period's reward is either paid

@@ -1,11 +1,11 @@
-/* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Family Hub · offline support
+/* Herding Cats · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
+/* Herding Cats · offline support
    Files are fetched fresh (not from the browser cache) when a new version installs.
    Keeps the app's own files on the device so it opens without internet.
    Raise VERSION with every release so devices pick up the new files. */
-const VERSION = 'fh-1.0.0';
+const VERSION = 'fh-1.1.0';
 const SHELL = [
-  './', 'index.html', 'css/app.css', 'js/db.js', 'js/cal.js', 'js/study.js', 'js/money.js', 'js/chores.js', 'js/app.js', 'manifest.webmanifest',
+  './', 'index.html', 'css/app.css', 'js/db.js', 'js/cal.js', 'js/study.js', 'js/money.js', 'js/chores.js', 'js/cats.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
 ];
 const FONTS = 'fh-fonts';

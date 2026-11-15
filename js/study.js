@@ -1,5 +1,5 @@
-/* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Family Hub · study planner logic
+/* Herding Cats · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
+/* Herding Cats · study planner logic
    Reading an exam timetable from text (typed, pasted, or read from a photo)
    and building a revision plan. Pure functions: no screens, no database. */
 (function () {

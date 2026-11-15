@@ -1,9 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#1f3a68"/>
-  <rect x="112" y="136" width="288" height="256" rx="36" fill="none" stroke="#ffffff" stroke-width="28"/>
-  <path d="M112 212h288" stroke="#ffffff" stroke-width="28"/>
-  <path d="M184 104v64M328 104v64" stroke="#ffffff" stroke-width="28" stroke-linecap="round"/>
-  <circle cx="188" cy="302" r="30" fill="#ff6f86"/>
-  <circle cx="256" cy="302" r="30" fill="#66a8ff"/>
-  <circle cx="324" cy="302" r="30" fill="#f2bd3c"/>
+<!-- Herding Cats · Copyright (c) 2026 Natius. All rights reserved. -->
+<rect width="512" height="512" rx="112" fill="#1f3a68"/><rect x="104" y="132" width="304" height="276" rx="36" fill="#ffffff"/><path d="M104 168 a36 36 0 0 1 36 -36 h232 a36 36 0 0 1 36 36 v34 h-304 z" fill="#ff6f86"/><path d="M184 104v56M328 104v56" stroke="#ffffff" stroke-width="26" stroke-linecap="round"/><rect x="138" y="228" width="46" height="36" rx="8" fill="#eef1f5"/><rect x="200" y="228" width="46" height="36" rx="8" fill="#eef1f5"/><rect x="262" y="228" width="46" height="36" rx="8" fill="#eef1f5"/><rect x="324" y="228" width="46" height="36" rx="8" fill="#eef1f5"/><rect x="138" y="282" width="46" height="36" rx="8" fill="#eef1f5"/><rect x="200" y="282" width="46" height="36" rx="8" fill="#eef1f5"/><rect x="262" y="282" width="46" height="36" rx="8" fill="#eef1f5"/><rect x="324" y="282" width="46" height="36" rx="8" fill="#eef1f5"/><rect x="138" y="336" width="46" height="36" rx="8" fill="#eef1f5"/><rect x="200" y="336" width="46" height="36" rx="8" fill="#eef1f5"/><rect x="262" y="336" width="46" height="36" rx="8" fill="#eef1f5"/><rect x="324" y="336" width="46" height="36" rx="8" fill="#eef1f5"/><g transform="translate(172 366) rotate(50) scale(1.0)" fill="#ff6f86">
+<path d="M0 -2 C 16 -2 26 12 26 22 C 26 32 16 34 0 30 C -16 34 -26 32 -26 22 C -26 12 -16 -2 0 -2 Z"/>
+<ellipse cx="-24" cy="-14" rx="8" ry="10.5" transform="rotate(-20 -24 -14)"/>
+<ellipse cx="-9" cy="-28" rx="8.5" ry="11"/>
+<ellipse cx="9" cy="-28" rx="8.5" ry="11"/>
+<ellipse cx="24" cy="-14" rx="8" ry="10.5" transform="rotate(20 24 -14)"/>
+</g><g transform="translate(254 322) rotate(50) scale(1.0)" fill="#66a8ff">
+<path d="M0 -2 C 16 -2 26 12 26 22 C 26 32 16 34 0 30 C -16 34 -26 32 -26 22 C -26 12 -16 -2 0 -2 Z"/>
+<ellipse cx="-24" cy="-14" rx="8" ry="10.5" transform="rotate(-20 -24 -14)"/>
+<ellipse cx="-9" cy="-28" rx="8.5" ry="11"/>
+<ellipse cx="9" cy="-28" rx="8.5" ry="11"/>
+<ellipse cx="24" cy="-14" rx="8" ry="10.5" transform="rotate(20 24 -14)"/>
+</g><g transform="translate(338 268) rotate(50) scale(1.0)" fill="#5fd38a">
+<path d="M0 -2 C 16 -2 26 12 26 22 C 26 32 16 34 0 30 C -16 34 -26 32 -26 22 C -26 12 -16 -2 0 -2 Z"/>
+<ellipse cx="-24" cy="-14" rx="8" ry="10.5" transform="rotate(-20 -24 -14)"/>
+<ellipse cx="-9" cy="-28" rx="8.5" ry="11"/>
+<ellipse cx="9" cy="-28" rx="8.5" ry="11"/>
+<ellipse cx="24" cy="-14" rx="8" ry="10.5" transform="rotate(20 24 -14)"/>
+</g>
 </svg>

@@ -1,7 +1,7 @@
 {
-  "name": "Family Hub",
-  "short_name": "Family Hub",
-  "description": "Children's activities, study plans, homework and money in one place. Data stays on this device.",
+  "name": "Herding Cats",
+  "short_name": "Herding Cats",
+  "description": "Herding Cats, the family calendar: children's activities, study plans, homework and money in one place. Data stays on this device.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

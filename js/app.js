@@ -1,5 +1,5 @@
-/* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Family Hub · app (beta, milestone 7: Phase 1 complete)
+/* Herding Cats · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
+/* Herding Cats · app (beta, milestone 7: Phase 1 complete)
    Screens: first-time setup, Today, Calendar (activities, reminders, school
    terms, tasks, exams, study), Tasks, Study planner, Money (accounts, savings
    goals, money owed, chores, reward goals), child pages, Settings. */
@@ -8,7 +8,7 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const MILESTONE = 7;
 
   /* ---------- Small helpers ---------- */
@@ -151,17 +151,20 @@
   /* ---------- Views ---------- */
   function vError() {
     return `<div class="solo"><section class="card stack">
-      <h1 class="solo-h">Family Hub can't save on this device</h1>
+      <h1 class="solo-h">Herding Cats can't save on this device</h1>
       <p>This browser isn't letting the app store its data. This usually happens in a private or incognito window, or when site data is blocked in the browser's settings.</p>
       <p class="muted">Details: ${esc(S.error)}</p>
       <div class="row"><button class="btn pri" data-act="retry">Try again</button></div>
     </section></div>`;
   }
 
+  /* An empty list shows the sleeping cat with its message. */
+  const emptyCat = msg => `<div class="ecat"><span class="ecat-img" aria-hidden="true">${FH.cats.sleep}</span><p class="empty">${msg}</p></div>`;
+
   function vSetup() {
     const rows = S.setup.rows;
     return `<div class="solo">
-      <div class="hero"><div class="eyebrow">Family Hub · beta</div><h1>Welcome</h1>
+      <div class="hero"><span class="hcat" aria-hidden="true">${FH.cats.welcome}</span><div class="eyebrow">Herding Cats · family calendar</div><h1>Welcome</h1>
         <p class="digest">Add your children to get started. Everything you enter stays on this device; nothing is uploaded.</p></div>
       <section class="card stack">
         <label class="fld">Family name (optional)<input id="su-family" placeholder="e.g. The Rautenbachs" value="${esc(S.setup.family)}" autocomplete="off"></label>
@@ -171,7 +174,7 @@
         <div class="err" id="su-err" role="alert"></div>
         <div class="row" style="justify-content:space-between">
           <button class="btn" data-act="go-restore">Restore from a backup</button>
-          <button class="btn pri" data-act="su-finish">Start using Family Hub</button>
+          <button class="btn pri" data-act="su-finish">Start using Herding Cats</button>
         </div>
       </section>
       <p class="muted small center">Setting up a second device? Export a backup on the first device, then choose Restore from a backup here.</p>
@@ -249,7 +252,7 @@
       <div class="cols">
         <div class="stack">
           <section class="card"><div class="card-h"><h3>Today</h3><button class="btn sm" data-act="nav" data-v="calendar">Week view</button></div>
-            ${ev.length ? ev.map(e => evRow(e)).join('') : `<p class="empty">Nothing planned today.</p>`}
+            ${ev.length ? ev.map(e => evRow(e)).join('') : emptyCat('Nothing planned today.')}
             ${!S.activities.length ? `<div class="nudge"><p class="small">Add weekly activities like hockey practice or music lessons. They repeat every week and pause in school holidays.</p><button class="btn sm pri" data-act="add" data-v="activity">Add an activity</button></div>` : ''}
           </section>
           ${dueSoonCard()}
@@ -262,7 +265,7 @@
         <div class="stack">
           ${approvalsCard()}
           ${backupCard(backupAge)}
-          ${S.storage.persisted === false ? `<section class="card warnc"><div class="card-h"><h3>Protect your data</h3></div><p class="small">This browser may clear Family Hub's data when the device runs low on space. Ask it to keep the data, and install the app to your home screen.</p><div class="row" style="margin-top:10px"><button class="btn sm pri" data-act="persist">Keep data on this device</button><button class="btn sm" data-act="nav" data-v="settings">Settings</button></div></section>` : ''}
+          ${S.storage.persisted === false ? `<section class="card warnc"><div class="card-h"><h3>Protect your data</h3></div><p class="small">This browser may clear the app's data when the device runs low on space. Ask it to keep the data, and install the app to your home screen.</p><div class="row" style="margin-top:10px"><button class="btn sm pri" data-act="persist">Keep data on this device</button><button class="btn sm" data-act="nav" data-v="settings">Settings</button></div></section>` : ''}
         </div>
       </div></div>`;
   }
@@ -287,14 +290,14 @@
       <div class="phead">${avatar(c, true)}<div class="min0" style="flex:1"><h1>${esc(c.name)}</h1><div class="muted">${esc(c.grade || '')} · ${colName(c.colour)}</div></div>
         <button class="btn" data-act="child-edit" data-v="${c.id}">Edit</button></div>
       <section class="card" style="margin-bottom:14px"><div class="card-h"><h3>Today · ${C.fmtDay(C.today())}</h3><button class="btn sm" data-act="only-child" data-v="${c.id}">Week view</button></div>
-        ${(() => { const ev = C.eventsOn(C.today(), src(), { visible: new Set([c.id]) }); return ev.length ? ev.map(e => evRow(e)).join('') : '<p class="empty">Nothing planned today.</p>'; })()}</section>
+        ${(() => { const ev = C.eventsOn(C.today(), src(), { visible: new Set([c.id]) }); return ev.length ? ev.map(e => evRow(e)).join('') : emptyCat('Nothing planned today.'); })()}</section>
       <div class="cols">
         <section class="card"><div class="card-h"><h3>Weekly activities</h3><button class="btn sm" data-act="add" data-v="activity" data-child="${c.id}">Add</button></div>
           ${weeklyList(c.id)}</section>
         <section class="card"><div class="card-h"><h3>Upcoming reminders</h3><button class="btn sm" data-act="add" data-v="reminder" data-child="${c.id}">Add</button></div>
           ${upcomingReminders(c.id)}</section>
         <section class="card"><div class="card-h"><h3>Homework and projects</h3><button class="btn sm" data-act="add" data-v="task" data-child="${c.id}">Add</button></div>
-          ${taskRows(S.tasks.filter(t => t.owner === c.id && !t.done).sort(byDue), true) || '<p class="empty">No open homework or projects.</p>'}</section>
+          ${taskRows(S.tasks.filter(t => t.owner === c.id && !t.done).sort(byDue), true) || emptyCat('No open homework or projects.')}</section>
         <section class="card"><div class="card-h"><h3>Upcoming exams</h3><button class="btn sm" data-act="nav" data-v="study">Study planner</button></div>${studyProgress(c.id)}${examRows(S.exams.filter(x => x.owner === c.id && x.date >= C.today()).sort(byDate).slice(0, 8), true) || '<p class="empty">No exams coming up.</p>'}</section>
         ${childMoneyCard(c.id)}
         <section class="card"><div class="card-h"><h3>Chores and reward goals</h3><button class="btn sm" data-act="money-child" data-v="${c.id}">Open</button></div>
@@ -394,7 +397,7 @@
         <div class="seg" role="group">${[['open', 'Open'], ['done', 'Done'], ['all', 'All']].map(([v2, l]) => `<button data-act="tfilter" data-v="${v2}" aria-pressed="${v2 === f}">${l}</button>`).join('')}</div></div>
       <div class="filters">${toggles()}</div>
       <div class="stack">${shown.map(([h, its, nT, nS]) => `<section class="card"><div class="card-h"><h3>${h}</h3><span class="muted" style="font-size:13px">${[nT ? `${nT} ${nT === 1 ? 'task' : 'tasks'}` : '', nS ? `${nS} ${nS === 1 ? 'step' : 'steps'}` : ''].filter(Boolean).join(' · ')}</span></div>${its.map(it => it.step ? stepItemRow(it.task, it.step) : taskRows([it.task])).join('')}</section>`).join('')
-        || `<section class="card"><p class="empty">${S.tasks.length ? 'No tasks match these filters.' : 'No homework or projects yet.'}</p>${S.tasks.length ? '' : '<button class="btn pri" data-act="add" data-v="task">Add homework or a project</button>'}</section>`}</div>
+        || `<section class="card">${emptyCat(S.tasks.length ? 'No tasks match these filters.' : 'No homework or projects yet.')}${S.tasks.length ? '' : '<button class="btn pri" data-act="add" data-v="task">Add homework or a project</button>'}</section>`}</div>
     </div>`;
   }
   function dueSoonCard() {
@@ -444,7 +447,7 @@
     const p = periods.find(x => x.id === st.period) || null;
     const head = `<div class="calbar"><div class="ttl">Exam periods</div><button class="btn" data-act="period-add">New exam period</button></div>
       ${periods.length ? `<div class="toggles" style="margin-bottom:14px">${periods.map(x => `<button class="tg" style="--c:var(--${colOf(x.owner)})" data-act="study-period" data-v="${x.id}" aria-pressed="${x.id === st.period}"><span class="dot"></span>${esc(nameOf(x.owner))} · ${esc(x.name)}</button>`).join('')}</div>` : ''}`;
-    if (!p) return `<div class="view">${head}<section class="card coming"><h2 class="solo-h">Plan for exams</h2><p>Create an exam period for a child, add the exams (from a photo of the timetable, by pasting it, or one by one), and Family Hub builds a revision plan you can adjust and tick off.</p><div><button class="btn pri" data-act="period-add">New exam period</button></div></section></div>`;
+    if (!p) return `<div class="view">${head}<section class="card coming"><span class="ecat-img" aria-hidden="true">${FH.cats.sleep}</span><h2 class="solo-h">Plan for exams</h2><p>Create an exam period for a child, add the exams (from a photo of the timetable, by pasting it, or one by one), and Herding Cats builds a revision plan you can adjust and tick off.</p><div><button class="btn pri" data-act="period-add">New exam period</button></div></section></div>`;
     if (st.imp && st.imp.period === p.id) return `<div class="view">${head}${importPanel(p)}</div>`;
     const exams = S.exams.filter(x => x.period === p.id).sort(byDate);
     const sess = S.sessions.filter(x => x.period === p.id).sort(byDate);
@@ -458,7 +461,7 @@
       </section>
       <div class="seg" role="group" style="margin:14px 0">${[['exams', `Exams (${exams.length})`], ['plan', `Revision plan (${sess.length})`]].map(([k, l]) => `<button data-act="study-tab" data-v="${k}" aria-pressed="${st.tab === k}">${l}</button>`).join('')}</div>
       ${st.tab === 'plan' ? planView(p, exams, sess) : `<section class="card"><div class="card-h"><h3>Exams</h3></div>
-        ${exams.length ? examRows(exams) : '<p class="empty">No exams yet. Read them from the school\'s timetable, or add them one by one.</p>'}
+        ${exams.length ? examRows(exams) : emptyCat('No exams yet. Read them from the school\'s timetable, or add them one by one.')}
         <div class="row" style="margin-top:12px"><button class="btn pri" data-act="imp-start">Read exam timetable</button><button class="btn" data-act="exam-add">Add exam</button></div>
         ${exams.length && !sess.length ? `<div class="nudge"><p class="small">Exams added. Next, build the revision plan.</p><button class="btn sm pri" data-act="study-tab" data-v="plan">Go to revision plan</button></div>` : ''}
       </section>`}
@@ -484,7 +487,7 @@
     const prog = exams.map(e => { const xs = sess.filter(x => x.exam === e.id); const dn = xs.filter(x => x.done).length; return `<div class="prog" style="--c:var(--${colOf(e.owner)})"><span class="min0"><b>${esc(examTitle(e))}</b> <span class="muted">· ${C.fmtDay(e.date)}</span></span><span class="muted" style="font-size:13px">${dn}/${xs.length}</span><div class="track"><div class="fill" style="width:${xs.length ? Math.round(dn / xs.length * 100) : 0}%"></div></div></div>`; }).join('');
     return `<div class="cols">
       <section class="card"><div class="card-h"><h3>Sessions</h3><button class="btn sm" data-act="sess-add">Add session</button></div>
-        ${upcoming.length ? upcoming.map(dayBlock).join('') : '<p class="empty">No sessions left. Good luck!</p>'}
+        ${upcoming.length ? upcoming.map(dayBlock).join('') : emptyCat('No sessions left. Good luck!')}
         ${past.length ? `<details class="pastsess"><summary>Earlier sessions (${past.reduce((n, [, xs]) => n + xs.length, 0)})</summary>${past.reverse().map(dayBlock).join('')}</details>` : ''}
       </section>
       <div class="stack">
@@ -765,7 +768,7 @@
       </div>
       <div class="mgrid">
         <div class="stack">
-          ${m.accs.map(a => accountCard(a)).join('') || `<section class="card"><p class="empty">No accounts yet. Add ${esc(kid.name)}'s bank account or cash savings to track balances and goals.</p></section>`}
+          ${m.accs.map(a => accountCard(a)).join('') || `<section class="card">${emptyCat(`No accounts yet. Add ${esc(kid.name)}'s bank account or cash savings to track balances and goals.`)}</section>`}
           <div><button class="btn" data-act="acc-add">Add account</button></div>
         </div>
         <section class="card"><div class="card-h"><h3>Money owed</h3><button class="btn sm" data-act="led-add">Add</button></div>
@@ -1249,13 +1252,13 @@
   function helpCard() {
     const q = (title, body) => `<details class="help"><summary>${title}</summary><div class="small">${body}</div></details>`;
     return `<section class="card" id="help"><div class="card-h"><h3>Help</h3></div>
-      ${q('Install on iPhone or iPad', '<ol><li>Open the app\'s address in <b>Safari</b> (not another browser).</li><li>Tap the Share button, then <b>Add to Home Screen</b>, then Add.</li><li>Open Family Hub from the new icon. It then works without internet.</li></ol>')}
+      ${q('Install on iPhone or iPad', '<ol><li>Open the app\'s address in <b>Safari</b> (not another browser).</li><li>Tap the Share button, then <b>Add to Home Screen</b>, then Add.</li><li>Open Herding Cats from the new icon. It then works without internet.</li></ol>')}
       ${q('Install on Android', '<ol><li>Open the app\'s address in <b>Chrome</b>.</li><li>Tap <b>Install app</b> when it\'s offered, or the ⋮ menu, then <b>Install app</b> or <b>Add to Home screen</b>.</li></ol>')}
-      ${q('Install on a PC or Mac', '<ol><li>Open the app\'s address in Chrome or Edge.</li><li>Click the install icon at the right of the address bar, or the browser menu, then <b>Install Family Hub</b>.</li></ol>')}
+      ${q('Install on a PC or Mac', '<ol><li>Open the app\'s address in Chrome or Edge.</li><li>Click the install icon at the right of the address bar, or the browser menu, then <b>Install Herding Cats</b>.</li></ol>')}
       ${q('How updates arrive', '<p>New versions download in the background while you have internet. The app switches to the new version by itself the next time you open it; your data stays as it is. Settings › About shows the version you have.</p>')}
       ${q('Make a backup', '<p>Go to Settings › Backup. On a phone or PC that has the app installed, <b>Download backup file</b> saves one file with everything in it; keep it somewhere safe, for example in Google Drive, iCloud or email it to yourself. <b>Copy backup as text</b> works everywhere: paste it into a note. Make one at least once a week; Today reminds you after 7 days.</p>')}
       ${q('Move data to your other device', '<ol><li>On the device with your data: Settings › Backup › Download backup file (or Copy backup as text).</li><li>Get the file or text to the other device (email, WhatsApp to yourself, or cloud storage).</li><li>On the other device: Settings › Backup › <b>Restore from a backup</b>, choose the file or paste the text, and confirm.</li></ol><p>Restoring replaces everything on that device. Until shared sync arrives in Phase 3, each device keeps its own copy, so pick one device as the main one.</p>')}
-      ${q('A phone is lost, broken or replaced', '<p>Install Family Hub on the new phone, then choose <b>Restore from a backup</b> on the welcome screen and use your latest backup file or text. Anything added after that backup is not in it, which is why a weekly backup matters.</p>')}
+      ${q('A phone is lost, broken or replaced', '<p>Install Herding Cats on the new phone, then choose <b>Restore from a backup</b> on the welcome screen and use your latest backup file or text. Anything added after that backup is not in it, which is why a weekly backup matters.</p>')}
       ${q('Keep the data safe on the device', '<p>Under Settings › Storage, the label should say <b>Kept</b>. If it says "May be cleared", tap <b>Keep data on this device</b>. Installing the app to the home screen also protects the data, especially on iPhone.</p>')}
     </section>`;
   }
@@ -1316,7 +1319,7 @@
           </button>`;
         }).join('')}</div>
         <section class="card" style="margin-top:14px"><div class="card-h"><h3>${C.fmtLong(c.sel)}</h3>${S.sc.offLabel(c.sel) ? `<span class="pill">${esc(S.sc.offLabel(c.sel))}</span>` : ''}</div>
-          ${selEv.length ? selEv.map(e => evRow(e)).join('') : '<p class="empty">Nothing planned on this day.</p>'}</section>`;
+          ${selEv.length ? selEv.map(e => evRow(e)).join('') : emptyCat('Nothing planned on this day.')}</section>`;
     }
     const noKids = !S.children.length;
     return `<div class="view">
@@ -1378,15 +1381,15 @@
       </section>
 
       <section class="card"><div class="card-h"><h3>Storage on this device</h3>${st.persisted === true ? '<span class="pill on">Kept</span>' : st.persisted === false ? '<span class="pill warn">May be cleared</span>' : ''}</div>
-        <p class="small">${st.persisted === true ? 'This browser has agreed to keep Family Hub\'s data, even when space runs low.' : st.persisted === false ? 'This browser may clear the data if the device runs low on space. Ask it to keep the data. Installing the app to your home screen also helps, especially on iPhone.' : 'This browser doesn\'t say whether it keeps the data. Install the app and make regular backups.'}</p>
+        <p class="small">${st.persisted === true ? 'This browser has agreed to keep the app\'s data, even when space runs low.' : st.persisted === false ? 'This browser may clear the data if the device runs low on space. Ask it to keep the data. Installing the app to your home screen also helps, especially on iPhone.' : 'This browser doesn\'t say whether it keeps the data. Install the app and make regular backups.'}</p>
         ${st.persisted === false ? '<div class="row" style="margin-top:10px"><button class="btn sm pri" data-act="persist">Keep data on this device</button></div>' : ''}
         ${st.usage != null ? `<p class="meta" style="margin-top:8px">Using ${fmtBytes(st.usage)} on this device.</p>` : ''}
       </section>
 
       <section class="card"><div class="card-h"><h3>Install the app</h3>${installed ? '<span class="pill on">Installed</span>' : ''}</div>
-        ${installed ? '<p class="small">Family Hub is installed and works without internet.</p>'
-          : inFrame ? '<p class="small">Installing works once Family Hub is on its own web address (GitHub Pages). This test link can\'t be installed.</p>'
-          : S.installEvt ? '<p class="small">Add Family Hub to this device so it opens like an app and works without internet.</p><div class="row" style="margin-top:10px"><button class="btn sm pri" data-act="install">Install Family Hub</button></div>'
+        ${installed ? '<p class="small">Herding Cats is installed and works without internet.</p>'
+          : inFrame ? '<p class="small">Installing works once Herding Cats is on its own web address (GitHub Pages). This test link can\'t be installed.</p>'
+          : S.installEvt ? '<p class="small">Add Herding Cats to this device so it opens like an app and works without internet.</p><div class="row" style="margin-top:10px"><button class="btn sm pri" data-act="install">Install Herding Cats</button></div>'
           : ios ? '<p class="small">In Safari, tap the Share button, then <b>Add to Home Screen</b>.</p>'
           : '<p class="small">In your browser menu, choose <b>Install app</b> or <b>Add to Home screen</b>.</p>'}
       </section>
@@ -1402,7 +1405,7 @@
       ${roadmap()}
 
       <section class="card"><div class="card-h"><h3>About</h3></div>
-        <p class="meta">Family Hub beta ${VERSION} · milestone ${MILESTONE} of 7${inFrame ? ' · test link' : ''}</p>
+        <p class="meta">Herding Cats beta ${VERSION} · milestone ${MILESTONE} of 7${inFrame ? ' · test link' : ''}</p>
         <p class="meta" style="margin-top:4px">© 2026 Natius. All rights reserved.</p>
       </section>
     </div></div>`;
@@ -1580,12 +1583,12 @@
 
   /* ---------- Render ---------- */
   const NAV = [['today', 'Today'], ['calendar', 'Calendar'], ['tasks', 'Tasks'], ['study', 'Study'], ['money', 'Money']];
-  const TITLES = { today: 'Family Hub', calendar: 'Calendar', tasks: 'Tasks', study: 'Study planner', money: 'Money', settings: 'Settings' };
+  const TITLES = { today: 'Herding Cats', calendar: 'Calendar', tasks: 'Tasks', study: 'Study planner', money: 'Money', settings: 'Settings' };
 
   function render() {
     const app = $('#app');
     if (S.error) { app.innerHTML = vError(); renderSheet(); return; }
-    if (!S.ready) { app.innerHTML = '<div class="solo"><p class="muted center" style="padding-top:40px">Opening Family Hub…</p></div>'; return; }
+    if (!S.ready) { app.innerHTML = '<div class="solo"><p class="muted center" style="padding-top:40px">Opening Herding Cats…</p></div>'; return; }
     if (!S.children.length && !S.setupDone) {
       if (!S.setup) S.setup = { family: '', rows: [{ name: '', grade: 'Grade 1', colour: 'c1' }] };
       app.innerHTML = vSetup(); renderSheet(); return;
@@ -1593,11 +1596,11 @@
     const v = S.view;
     const content = v === 'today' ? vToday() : v === 'calendar' ? vCalendar() : v === 'tasks' ? vTasks() : v === 'study' ? vStudy() : v === 'money' ? vMoney() : v === 'settings' ? vSettings() : v === 'child' ? vChild(S.child) : COMING[v] ? vComing(v) : vToday();
     const fab = ['today', 'calendar', 'child', 'tasks'].includes(v) && S.children.length;
-    const title = v === 'child' ? (S.children.find(c => c.id === S.child)?.name || 'Child') : TITLES[v] || 'Family Hub';
+    const title = v === 'child' ? (S.children.find(c => c.id === S.child)?.name || 'Child') : TITLES[v] || 'Herding Cats';
     const cur = k => (v === k ? 'aria-current="page"' : '');
     app.innerHTML = `<div class="shell">
       <nav class="side" aria-label="Main">
-        <div class="brand">Family Hub</div><div class="brand-sub"><span class="proto">Beta · milestone ${MILESTONE}</span></div>
+        <div class="brand">Herding Cats</div><div class="brand-sub"><span class="tagline">family calendar</span> <span class="proto">Beta</span></div>
         ${NAV.map(([k, l]) => `<button class="navbtn" data-act="nav" data-v="${k}" ${cur(k)}>${ic(k)}${l}${COMING[k] ? `<span class="soon">M${COMING[k].m}</span>` : ''}</button>`).join('')}
         <h3>Children</h3>
         ${S.children.map(c => `<button class="navbtn" data-act="open-child" data-v="${c.id}" ${v === 'child' && S.child === c.id ? 'aria-current="page"' : ''}>${avatar(c)}${esc(c.name)}</button>`).join('')}
@@ -1606,7 +1609,7 @@
         <button class="navbtn" data-act="nav" data-v="settings" ${cur('settings')}>${ic('settings')}Settings</button>
       </nav>
       <main class="main">
-        <header class="topbar"><h2>${esc(title)}</h2><span class="proto">Beta</span><button class="iconbtn gear" data-act="nav" data-v="settings" aria-label="Settings">${ic('settings')}</button></header>
+        <header class="topbar"><span class="tcat" aria-hidden="true">${FH.cats[v === 'child' ? 'welcome' : v] || FH.cats.today}</span><h2>${esc(title)}</h2><span class="proto">Beta</span><button class="iconbtn gear" data-act="nav" data-v="settings" aria-label="Settings">${ic('settings')}</button></header>
         ${content}
       </main>
       <nav class="tabbar" aria-label="Main">${NAV.map(([k, l]) => `<button data-act="nav" data-v="${k}" ${cur(k)}>${ic(k)}${l}</button>`).join('')}</nav>
@@ -1767,7 +1770,7 @@
     if (S.setup.family.trim()) await data.setSetting('familyName', S.setup.family.trim());
     await data.setSetting('setupDone', true);
     S.setup = null; await load(); go('today');
-    toast('Family Hub is ready. Make a backup in Settings once you have added more.');
+    toast('Herding Cats is ready. Make a backup in Settings once you have added more.');
     tryPersist(false);
   }
   function readSetupInputs() {
@@ -1789,7 +1792,7 @@
   async function exportFile() {
     const { b, text } = await makeBackup();
     const d = new Date(b.exportedAt);
-    const name = `family-hub-backup-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.json`;
+    const name = `herding-cats-backup-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.json`;
     const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
     const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
@@ -1806,7 +1809,7 @@
   function checkBackupText(text, fromFile) {
     let obj;
     try { obj = JSON.parse(text); }
-    catch (e) { S.sheet.error = fromFile ? "This file can't be read as a Family Hub backup. Choose the .json file the app exported." : "This text isn't a complete backup. Copy the whole backup again and paste all of it."; renderSheet(); return; }
+    catch (e) { S.sheet.error = fromFile ? "This file can't be read as a Herding Cats backup. Choose the .json file the app exported." : "This text isn't a complete backup. Copy the whole backup again and paste all of it."; renderSheet(); return; }
     try { S.sheet.summary = data.checkBackup(obj); S.sheet.backup = obj; S.sheet.error = ''; }
     catch (e) { S.sheet.error = e.message; }
     renderSheet();
@@ -1827,7 +1830,7 @@
       if (!navigator.storage?.persist) { if (announce) toast("This browser can't promise to keep the data. Install the app and make regular backups."); return; }
       const ok = await navigator.storage.persist();
       await refreshStorage(); render();
-      if (announce) toast(ok ? 'This device will keep Family Hub\'s data.' : 'The browser said no for now. Installing the app to your home screen usually changes that.');
+      if (announce) toast(ok ? 'This device will keep the app\'s data.' : 'The browser said no for now. Installing the app to your home screen usually changes that.');
     } catch (e) { /* ignore */ }
   }
   async function loadSettings() {
@@ -2102,7 +2105,7 @@
         case 'digest-open': S.sheet = { kind: 'digest' }; renderSheet(); return;
         case 'digest-close': S.sheet = null; renderSheet(); await data.setSetting('digestSeen', C.today()); return;
         case 'only-child': S.hidden = new Set(S.children.filter(c => c.id !== v).map(c => c.id)); S.cal.mode = 'week'; S.cal.cursor = C.today(); saveCalPrefs(); go('calendar'); return;
-        case 'install': if (S.installEvt) { S.installEvt.prompt(); const r = await S.installEvt.userChoice; S.installEvt = null; render(); if (r.outcome === 'accepted') toast('Family Hub is being installed.'); } return;
+        case 'install': if (S.installEvt) { S.installEvt.prompt(); const r = await S.installEvt.userChoice; S.installEvt = null; render(); if (r.outcome === 'accepted') toast('Herding Cats is being installed.'); } return;
         default: return;
       }
     } catch (e) {
@@ -2159,7 +2162,7 @@
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && S.sheet) { S.sheet = null; renderSheet(); } });
   window.addEventListener('hashchange', () => { fromHash(); render(); });
   window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); S.installEvt = e; if (S.view === 'settings') render(); });
-  window.addEventListener('appinstalled', () => { S.installEvt = null; toast('Family Hub is installed.'); render(); });
+  window.addEventListener('appinstalled', () => { S.installEvt = null; toast('Herding Cats is installed.'); render(); });
 
   /* ---------- Offline support (only when the app has its own web address) ---------- */
   if ('serviceWorker' in navigator && !inFrame && (location.protocol === 'https:' || location.hostname === 'localhost')) {
@@ -2169,7 +2172,7 @@
     let reloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (!hadController || reloaded) return;
-      if (S.sheet) { toast('Family Hub has been updated. Close and reopen it to use the new version.'); return; }
+      if (S.sheet) { toast('Herding Cats has been updated. Close and reopen it to use the new version.'); return; }
       reloaded = true; location.reload();
     });
   }

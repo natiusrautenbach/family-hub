@@ -1,4 +1,4 @@
-# Family Hub
+# Herding Cats
 
 A family organiser for children's activities, study plans, homework and money.
 It runs in the browser, installs to the home screen on phone and PC, and works offline.

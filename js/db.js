@@ -1,5 +1,5 @@
-/* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Family Hub · data layer
+/* Herding Cats · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
+/* Herding Cats · data layer
    Every read and write in the app goes through FH.data, which checks the
    current user's role before touching the local database (IndexedDB).
    Records are sync-ready: each has a unique id, created/updated timestamps,
@@ -9,6 +9,7 @@
   'use strict';
   const FH = (window.FH = window.FH || {});
 
+  /* Internal names stay 'family-hub' after the rename to Herding Cats, so existing data and backups keep working. */
   const DB_NAME = 'family-hub';
   const DB_VERSION = 6;
   const BACKUP_FORMAT = 1;
@@ -67,7 +68,7 @@
         resolve(db);
       };
       req.onerror = () => reject(req.error || new Error('The database could not be opened.'));
-      req.onblocked = () => reject(new Error('Family Hub is open in another tab with an older version. Close the other tab and try again.'));
+      req.onblocked = () => reject(new Error('Herding Cats is open in another tab with an older version. Close the other tab and try again.'));
     });
     dbp.catch(() => { dbp = null; });
     return dbp;
@@ -231,9 +232,9 @@
 
     /* Checks a backup without changing anything. Returns a summary or throws a readable error. */
     checkBackup(obj) {
-      if (!obj || typeof obj !== 'object') throw new Error("This isn't a Family Hub backup. Choose the file the app exported.");
-      if (obj.app !== 'family-hub') throw new Error("This file isn't a Family Hub backup. Choose the file the app exported.");
-      if (typeof obj.format !== 'number' || obj.format > BACKUP_FORMAT) throw new Error('This backup was made by a newer version of Family Hub. Update the app on this device first.');
+      if (!obj || typeof obj !== 'object') throw new Error("This isn't a Herding Cats backup. Choose the file the app exported.");
+      if (obj.app !== 'family-hub') throw new Error("This file isn't a Herding Cats backup. Choose the file the app exported.");
+      if (typeof obj.format !== 'number' || obj.format > BACKUP_FORMAT) throw new Error('This backup was made by a newer version of Herding Cats. Update the app on this device first.');
       if (!obj.stores || typeof obj.stores !== 'object') throw new Error('This backup is damaged: it has no data in it.');
       const counts = {};
       for (const [s, rows] of Object.entries(obj.stores)) {

@@ -1,5 +1,5 @@
-/* Family Hub · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Family Hub · money logic
+/* Herding Cats · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
+/* Herding Cats · money logic
    All amounts are whole cents (R 12,50 is 1250) so sums never drift.
    Pure functions: no screens, no database. */
 (function () {
