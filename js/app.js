@@ -8,9 +8,14 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '2.2.0';
+  const VERSION = '2.3.0';
   const MILESTONE = 7;
-  const PHASE2 = '2.2'; // Phase 2 milestone in this build
+  const PHASE2 = '2.3'; // Phase 2 milestone in this build
+  /* Who is using the app decides what it offers (the server decides what they receive). */
+  const isAdmin = () => !S.session || ['owner', 'parent'].includes(S.session.role);
+  const isChild = () => !!S.session && ['child_view', 'child_limited'].includes(S.session.role);
+  const seesMoney = () => isAdmin() || (isChild() && S.session.money !== false);
+  const canAdd = () => isAdmin() || (S.session && S.session.role === 'child_limited');
 
   /* ---------- Small helpers ---------- */
   const $ = s => document.querySelector(s);
@@ -206,10 +211,10 @@
     if (!s) return '';
     const isOwner = s.role === 'owner';
     return `<section class="card" id="account"><div class="card-h"><h3>Your account</h3><span class="pill on">${esc(ROLE_LABEL[s.role] || s.role)}</span></div>
-        <div class="set"><span class="min0"><b>${esc(s.name)}</b><span class="muted"> · ${esc(s.email)}</span></span></div>
+        <div class="set"><span class="min0"><b>${esc(s.name)}</b><span class="muted"> · ${s.username ? `username ${esc(s.username)}` : esc(s.email)}</span></span></div>
         <div class="set"><span class="min0">Family: <b>${esc(S.family || s.familyName)}</b>${isOwner ? '<span class="muted"> · you are its administrator</span>' : ''}</span></div>
         ${FH.sync && FH.sync.available ? `<div class="set"><span class="min0">Sync: <span id="sync-line" data-state="${S.syncStatus ? S.syncStatus.state : ''}">${syncLine(S.syncStatus)}</span></span></div>` : ''}
-        <p class="hint" style="margin-top:8px">Everything you add is shared with your family and kept on this device too, so it works without internet. Roles for each person and children's logins arrive in the next updates.</p>
+        <p class="hint" style="margin-top:8px">${isAdmin() ? 'Everything you add is shared with your family and kept on this device too, so it works without internet.' : 'You see what your family administrator chose for you. It\'s kept on this device too, so it works without internet.'}</p>
         <div class="row" style="margin-top:10px"><button class="btn sm" data-act="acct-signout">Sign out</button></div>
       </section>
       ${membersCard()}
@@ -233,7 +238,11 @@
     if (!S.session || !FH.cloud.members) return;
     try {
       S.members = (await FH.cloud.members(S.session.familyId)).sort((a, b) => (a.role === 'owner' ? -1 : 0) - (b.role === 'owner' ? -1 : 0) || a.joinedAt - b.joinedAt);
-      if (S.session.role === 'owner') S.invites = (await FH.cloud.invites(S.session.familyId)).filter(i => !i.usedBy && i.expiresAt > Date.now());
+      if (isAdmin()) {
+        S.invites = (await FH.cloud.invites(S.session.familyId)).filter(i => !i.usedBy && i.expiresAt > Date.now());
+        const fam = await FH.cloud.family(S.session.familyId);
+        if (fam.memberCount !== S.members.length) await FH.cloud.recount(S.session.familyId, S.members.length).catch(() => {}); // keeps the 8-person limit right
+      }
       try { localStorage.setItem('hc-members-' + S.session.familyId, JSON.stringify(S.members)); } catch (e) { /* not kept */ }
     } catch (e) {
       try { S.members = S.members || JSON.parse(localStorage.getItem('hc-members-' + S.session.familyId)) || []; } catch (x) { S.members = S.members || []; }
@@ -254,21 +263,151 @@
     const el = document.getElementById('sync-line');
     if (el) { el.textContent = syncLine(st); el.dataset.state = st.state; }
   }
+  const ROLE_HELP = { parent: 'sees and changes everything', carer: 'calendar and tasks for chosen children, no money', child_view: 'sees their own schedule', child_limited: 'sees their own; ticks off and adds homework', pending: 'waiting for approval', owner: 'manages the family' };
   function membersCard() {
     const s = S.session;
     if (!s || !FH.cloud.members) return '';
-    const owner = s.role === 'owner';
+    const admin = isAdmin();
     const ms = S.members || [];
-    const ni = S.newInvite;
-    return `<section class="card" id="people"><div class="card-h"><h3>Your family</h3>${owner ? '<button class="btn sm" data-act="inv-new">Invite someone</button>' : ''}</div>
-      ${ms.length ? ms.map(m => `<div class="set"><span class="min0"><b>${esc(m.name)}</b>${m.uid === s.uid ? ' <span class="muted">(you)</span>' : ''}<span class="muted"> · ${esc(m.email)}</span></span><span class="pill ${m.role === 'owner' ? 'on' : ''}">${esc(ROLE_LABEL[m.role] || m.role)}</span></div>`).join('') : '<p class="empty">Loading…</p>'}
-      ${ni ? `<div class="invbox" id="new-invite"><b class="small">Invite link for a parent</b>
+    const full = ms.length >= FH.cloud.MAX_MEMBERS;
+    const ni = S.newInvite, nl = S.newLogin;
+    const waiting = ms.filter(m => m.role === 'pending');
+    const people = ms.filter(m => m.role !== 'pending');
+    const kidName = id => (S.children.find(c => c.id === id) || {}).name || '';
+    const detail = m => m.role === 'carer' ? ((m.kids || []).map(kidName).filter(Boolean).join(', ') || 'no children chosen yet')
+      : isChildRole(m.role) ? `${kidName(m.personId) || 'child not chosen'}${m.siblings ? ' · sees siblings\' activities' : ''}${m.money === false ? ' · no Money' : ''}` : ROLE_HELP[m.role] || '';
+    return `<section class="card" id="people"><div class="card-h"><h3>Your family</h3><span class="muted small">${ms.length} of ${FH.cloud.MAX_MEMBERS} people</span></div>
+      ${waiting.length && admin ? `<div class="pendbox"><b class="small">Waiting for your approval</b>${waiting.map(m => `<div class="set"><span class="min0"><b>${esc(m.name)}</b><span class="muted"> · ${esc(m.email)}</span></span><span class="row" style="gap:6px"><button class="btn sm pri" data-act="mem-approve" data-v="${m.uid}">Approve</button><button class="btn sm" data-act="mem-decline" data-v="${m.uid}">Decline</button></span></div>`).join('')}</div>` : ''}
+      ${people.length ? people.map(m => `<div class="set"><span class="min0"><b>${esc(m.name)}</b>${m.uid === s.uid ? ' <span class="muted">(you)</span>' : ''}<span class="muted"> · ${m.username ? `username <b>${esc(m.username)}</b>` : esc(m.email)}</span><br><span class="meta">${esc(detail(m))}</span></span><span class="row" style="gap:6px;flex-wrap:nowrap"><span class="pill ${m.role === 'owner' ? 'on' : ''}">${esc(ROLE_LABEL[m.role] || m.role)}</span>${admin && m.role !== 'owner' && m.uid !== s.uid ? `<button class="btn sm" data-act="mem-edit" data-v="${m.uid}">Edit</button>` : ''}</span></div>`).join('') : '<p class="empty">Loading…</p>'}
+      ${admin ? `<div class="row" style="margin-top:12px"><button class="btn sm" data-act="inv-new" ${full ? 'disabled' : ''}>Invite by link</button><button class="btn sm" data-act="login-add" ${full ? 'disabled' : ''}>Add a username</button></div>
+        ${full ? '<p class="hint">Your family has 8 people, the most a family can have. Remove someone to add another.</p>' : '<p class="hint">Invite by link: for adults with their own email or Google account. Add a username: for children, or anyone without email.</p>'}
+        <p class="meta" style="margin-top:6px">Family code: <b class="code">${esc(s.familyCode || '')}</b> · used with family usernames</p>` : '<p class="hint" style="margin-top:8px">Parents manage who is in the family.</p>'}
+      ${nl ? `<div class="invbox" id="new-login"><b class="small">${esc(nl.name)} can now sign in</b>
+          <p class="small">On the sign-in screen, tap <b>Family username</b> and enter:</p>
+          <div class="kv"><span>Family code</span><b class="code">${esc(s.familyCode || '')}</b><span>Username</span><b>${esc(nl.username)}</b><span>Password</span><b>the one you chose</b></div>
+          <p class="hint">Write these down for ${esc(nl.name)}. The password isn't shown again; you can set a new one under Edit.</p></div>` : ''}
+      ${ni ? `<div class="invbox" id="new-invite"><b class="small">Invite link</b>
           <input id="inv-link" readonly value="${esc(inviteLink(ni.token))}" aria-label="Invite link">
           <div class="row"><button class="btn sm pri" data-act="inv-copy">Copy link</button>${navigator.share ? '<button class="btn sm" data-act="inv-share">Share…</button>' : ''}</div>
-          <p class="hint">Send it to one person, e.g. on WhatsApp. It works once and expires on ${C.fmtDay(C.toS(new Date(ni.expiresAt)))}. They open it, sign in or create an account, and join as a parent.</p></div>` : ''}
-      ${owner && (S.invites || []).length ? `<p class="flbl" style="margin-top:10px">Open invite links</p>${S.invites.map(i => `<div class="set"><span class="small">For a parent · expires ${C.fmtDay(C.toS(new Date(i.expiresAt)))}</span><button class="btn sm" data-act="inv-cancel" data-v="${esc(i.token)}">Cancel</button></div>`).join('')}` : ''}
-      ${owner ? '' : '<p class="hint" style="margin-top:8px">Only the family administrator can invite people.</p>'}
+          <p class="hint">Send it to one person, e.g. on WhatsApp. It works once and expires on ${C.fmtDay(C.toS(new Date(ni.expiresAt)))}. When they've joined, approve them here and choose what they see.</p></div>` : ''}
+      ${admin && (S.invites || []).length ? `<p class="flbl" style="margin-top:10px">Open invite links</p>${S.invites.map(i => `<div class="set"><span class="small">Expires ${C.fmtDay(C.toS(new Date(i.expiresAt)))}</span><button class="btn sm" data-act="inv-cancel" data-v="${esc(i.token)}">Cancel</button></div>`).join('')}` : ''}
     </section>`;
+  }
+  const isChildRole = r => r === 'child_view' || r === 'child_limited';
+
+  /* Form: approve someone, or change what a person sees. */
+  function memberSheet() {
+    const sh = S.sheet, m = (S.members || []).find(x => x.uid === sh.uid);
+    if (!m) return `<div class="scrim" data-act="close-bg"><div class="panel"><p>That person is no longer in the family.</p><div class="actions full"><button class="btn" data-act="close">Close</button></div></div></div>`;
+    const role = sh.role || (m.role === 'pending' ? (m.requested || 'parent') : m.role);
+    const kids = sh.kids || m.kids || [];
+    const approving = m.role === 'pending';
+    const roleOpts = [['parent', 'Parent: sees and changes everything'], ['carer', 'Carer: chosen children, no money'], ['child_view', 'Child: sees their own schedule'], ['child_limited', 'Child: also ticks off and adds homework']];
+    return `<div class="scrim" data-act="close-bg"><div class="panel" role="dialog" aria-labelledby="sh-h"><h2 id="sh-h">${approving ? `Approve ${esc(m.name)}` : esc(m.name)}</h2>
+      ${approving ? `<p class="small muted">${esc(m.email)} joined with an invite link. Choose what they can see.</p>` : ''}
+      <form class="form" data-form="member" style="margin-top:14px">
+      <label class="full">Name, as the family sees it<input id="f-name" value="${esc(sh.name ?? m.name)}" autocomplete="off"></label>
+      <fieldset class="full"><legend>Role</legend>${roleOpts.map(([k, l]) => `<label class="check full"><input type="radio" name="f-role" value="${k}" data-act="mem-role" ${k === role ? 'checked' : ''}><span>${l}</span></label>`).join('')}</fieldset>
+      ${role === 'carer' ? `<fieldset class="full"><legend>Which children</legend>${S.children.map(c => `<label class="check full"><input type="checkbox" class="f-kid" value="${c.id}" ${kids.includes(c.id) ? 'checked' : ''}><span>${esc(c.name)}</span></label>`).join('') || '<p class="hint">Add children first.</p>'}</fieldset>` : ''}
+      ${isChildRole(role) ? `<label class="full">Which child is this?<select id="f-person"><option value="">Choose…</option>${S.children.map(c => `<option value="${c.id}" ${(sh.personId ?? m.personId) === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+        <label class="check full"><input type="checkbox" id="f-sibs" ${(sh.siblings ?? m.siblings) ? 'checked' : ''}><span>Sees brothers' and sisters' activities (not their tasks, study or money)</span></label>
+        <label class="check full"><input type="checkbox" id="f-money" ${(sh.money ?? m.money) !== false ? 'checked' : ''}><span>Sees their own money: balances, goals and chores</span></label>` : ''}
+      ${m.username && !approving ? `<label class="full">New password (only to replace a forgotten one)<input id="f-newpass" type="text" autocomplete="new-password" placeholder="At least 8 characters"></label>` : ''}
+      <div class="err full" id="f-err" role="alert"></div>
+      <div class="actions full">
+        ${approving ? `<button type="button" class="btn del" data-act="mem-decline" data-v="${m.uid}">Decline</button>` : `<button type="button" class="btn del${sh.armed ? ' armed' : ''}" data-act="mem-remove" data-v="${m.uid}">${sh.armed ? 'Tap again to remove' : 'Remove from family'}</button>`}
+        <button type="button" class="btn" data-act="close">Cancel</button>
+        <button class="btn pri" type="submit">${approving ? 'Approve' : 'Save'}</button>
+      </div></form></div></div>`;
+  }
+  /* Form: a family username and password, e.g. for a child. */
+  function loginSheet() {
+    const sh = S.sheet;
+    const forChild = sh.who !== 'other';
+    const child = forChild ? S.children.find(c => c.id === sh.personId) : null;
+    return `<div class="scrim" data-act="close-bg"><div class="panel" role="dialog" aria-labelledby="sh-h"><h2 id="sh-h">Add a username</h2>
+      <p class="small muted">For someone without email, such as a child. They sign in with your family code, a username and a password.</p>
+      <form class="form" data-form="login" style="margin-top:14px">
+      <div class="types full" role="group" aria-label="Who is it for"><button type="button" data-act="login-who" data-v="child" aria-pressed="${forChild}">A child</button><button type="button" data-act="login-who" data-v="other" aria-pressed="${!forChild}">Someone else</button></div>
+      ${forChild ? `<label class="full">Which child<select id="f-person">${S.children.map(c => `<option value="${c.id}" ${sh.personId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`
+        : `<label class="full">Name<input id="f-name" value="${esc(sh.name || '')}" placeholder="e.g. Gran" autocomplete="off"></label>`}
+      <label class="full">Username<input id="f-user" value="${esc(sh.username ?? (child ? child.name.toLowerCase().replace(/[^a-z0-9]/g, '') : ''))}" autocapitalize="none" autocomplete="off"><span class="hint" style="display:block;margin-top:4px">2 to 20 small letters or numbers, e.g. liam</span></label>
+      <label class="full">Password<input id="f-pass" type="text" autocomplete="new-password" value="${esc(sh.password || '')}"><span class="hint" style="display:block;margin-top:4px">At least 8 characters. Shown here so you can write it down.</span></label>
+      ${forChild ? `<fieldset class="full"><legend>What they can do</legend>
+          <label class="check full"><input type="radio" name="f-role" value="child_view" ${sh.role !== 'child_limited' ? 'checked' : ''}><span>See their own schedule, tasks and study plan</span></label>
+          <label class="check full"><input type="radio" name="f-role" value="child_limited" ${sh.role === 'child_limited' ? 'checked' : ''}><span>Also tick off homework, steps, revision and chores, and add homework</span></label></fieldset>
+        <label class="check full"><input type="checkbox" id="f-sibs" ${sh.siblings ? 'checked' : ''}><span>Sees brothers' and sisters' activities (not their tasks, study or money)</span></label>
+        <label class="check full"><input type="checkbox" id="f-money" ${sh.money !== false ? 'checked' : ''}><span>Sees their own money: balances, goals and chores</span></label>`
+      : `<fieldset class="full"><legend>Role</legend>
+          <label class="check full"><input type="radio" name="f-role" value="carer" ${sh.role !== 'parent' ? 'checked' : ''}><span>Carer: calendar and tasks for chosen children, no money</span></label>
+          <label class="check full"><input type="radio" name="f-role" value="parent" ${sh.role === 'parent' ? 'checked' : ''}><span>Parent: sees and changes everything</span></label></fieldset>
+        <fieldset class="full"><legend>Which children (carer)</legend>${S.children.map(c => `<label class="check full"><input type="checkbox" class="f-kid" value="${c.id}" ${(sh.kids || []).includes(c.id) ? 'checked' : ''}><span>${esc(c.name)}</span></label>`).join('')}</fieldset>`}
+      <div class="err full" id="f-err" role="alert"></div>
+      <div class="actions full"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit" ${sh.busy ? 'disabled' : ''}>${sh.busy ? 'Please wait…' : 'Add username'}</button></div>
+    </form></div></div>`;
+  }
+  /* Reads the member/login form as typed, so redrawing it keeps what was entered. */
+  function readPeopleForm() {
+    const sh = S.sheet;
+    const v = id => { const e = $('#' + id); return e ? e.value : undefined; };
+    const r = document.querySelector('input[name="f-role"]:checked');
+    if (r) sh.role = r.value;
+    if ($('#f-name')) sh.name = v('f-name');
+    if ($('#f-user')) sh.username = v('f-user');
+    if ($('#f-pass')) sh.password = v('f-pass');
+    if ($('#f-person')) sh.personId = v('f-person');
+    if ($('#f-sibs')) sh.siblings = $('#f-sibs').checked;
+    if ($('#f-money')) sh.money = $('#f-money').checked;
+    if (document.querySelector('.f-kid')) sh.kids = [...document.querySelectorAll('.f-kid:checked')].map(x => x.value);
+  }
+  async function saveMember() {
+    readPeopleForm();
+    const sh = S.sheet, s = S.session, m = (S.members || []).find(x => x.uid === sh.uid);
+    const err = t => { $('#f-err').textContent = t; };
+    const role = sh.role || m.requested || m.role;
+    const name = (sh.name ?? m.name).trim();
+    if (!name) return err('Enter a name.');
+    const fields = { role, displayName: name, kids: role === 'carer' ? (sh.kids || []) : [], personId: isChildRole(role) ? (sh.personId || null) : null, siblings: isChildRole(role) ? !!sh.siblings : false, money: isChildRole(role) ? sh.money !== false : true };
+    if (isChildRole(role) && !fields.personId) return err('Choose which child this is.');
+    if (role === 'carer' && !fields.kids.length) return err('Choose at least one child for the carer.');
+    const np = $('#f-newpass') ? $('#f-newpass').value.trim() : '';
+    if (np && np.length < 8) return err('Choose a new password of at least 8 characters.');
+    try {
+      if (np) await FH.cloud.createLogin(s.familyId, s.familyCode, { username: m.username, password: np, name, role, personId: fields.personId, kids: fields.kids, siblings: fields.siblings, money: fields.money, replacing: m.uid });
+      else await FH.cloud.updateMember(s.familyId, m.uid, fields);
+    } catch (e) { return err(`Nothing was saved: ${FH.cloud.message(e)}`); }
+    const was = m.role;
+    S.sheet = null; await loadPeople(); render();
+    toast(was === 'pending' ? `${name} is approved and can now open the family.` : np ? `New password set for ${name}.` : `Saved. ${name}'s phone updates next time it opens.`);
+  }
+  async function saveLogin() {
+    readPeopleForm();
+    const sh = S.sheet, s = S.session;
+    const err = t => { $('#f-err').textContent = t; };
+    const forChild = sh.who !== 'other';
+    const child = forChild ? S.children.find(c => c.id === (sh.personId || S.children[0]?.id)) : null;
+    const name = forChild ? (child ? child.name : '') : (sh.name || '').trim();
+    const username = (sh.username || '').trim().toLowerCase();
+    const role = sh.role || (forChild ? 'child_view' : 'carer');
+    if (!name) return err(forChild ? 'Add the child first under Children.' : 'Enter a name.');
+    if (!/^[a-z0-9]{2,20}$/.test(username)) return err('A username is 2 to 20 small letters or numbers, with no spaces, e.g. liam.');
+    if ((sh.password || '').length < 8) return err('Choose a password of at least 8 characters.');
+    if (!forChild && role === 'carer' && !(sh.kids || []).length) return err('Choose at least one child for the carer.');
+    if ((S.members || []).length >= FH.cloud.MAX_MEMBERS) return err(FH.cloud.message({ code: 'family-full' }));
+    sh.busy = true; renderSheet();
+    try {
+      await FH.cloud.createLogin(s.familyId, s.familyCode, { username, password: sh.password, name, role, personId: child ? child.id : null, kids: forChild ? [] : (sh.kids || []), siblings: forChild && !!sh.siblings, money: forChild ? sh.money !== false : true });
+    } catch (e) { sh.busy = false; renderSheet(); return err(`Nothing was saved: ${FH.cloud.message(e)}`); }
+    S.sheet = null; S.newLogin = { name, username }; await loadPeople(); render();
+    $('#new-login')?.scrollIntoView({ block: 'center' });
+  }
+  async function removeMember(uid, declining) {
+    const s = S.session, m = (S.members || []).find(x => x.uid === uid);
+    if (!m) return;
+    try { await FH.cloud.removeMember(s.familyId, m, s.familyCode); }
+    catch (e) { toast(`Not removed: ${FH.cloud.message(e)}`); return; }
+    S.sheet = null; await loadPeople(); render();
+    toast(declining ? `${m.name}'s request to join was declined.` : `${m.name} was removed from the family. Their phone loses access next time it opens.`);
   }
   async function newInvite() {
     const s = S.session;
@@ -343,8 +482,8 @@
           </section>
         </div>
         <div class="stack">
-          ${approvalsCard()}
-          ${backupCard(backupAge)}
+          ${isAdmin() ? approvalsCard() : ''}
+          ${isAdmin() ? backupCard(backupAge) : ''}
           ${S.storage.persisted === false ? `<section class="card warnc"><div class="card-h"><h3>Protect your data</h3></div><p class="small">This browser may clear the app's data when the device runs low on space. Ask it to keep the data, and install the app to your home screen.</p><div class="row" style="margin-top:10px"><button class="btn sm pri" data-act="persist">Keep data on this device</button><button class="btn sm" data-act="nav" data-v="settings">Settings</button></div></section>` : ''}
         </div>
       </div></div>`;
@@ -352,7 +491,7 @@
   function backupCard(age) {
     const msg = age === null ? 'No backup has been made on this device yet.' : age === 0 ? 'Last backup: today.' : `Last backup: ${age} day${age === 1 ? '' : 's'} ago.`;
     const due = age === null || age > 7;
-    return `<section class="card${due ? ' warnc' : ''}"><div class="card-h"><h3>${due ? 'Time for a backup' : 'Backup'}</h3></div><p class="small">${msg} A backup is also how you copy your data to your other device.</p><div class="row" style="margin-top:10px"><button class="btn sm" data-act="nav" data-v="settings" data-scroll="backup">Make a backup</button></div></section>`;
+    return `<section class="card${due ? ' warnc' : ''}"><div class="card-h"><h3>${due ? 'Time for a backup' : 'Backup'}</h3></div><p class="small">${msg} ${S.session ? 'Your family\'s data is also kept safe online; a backup is an extra copy.' : 'A backup is also how you copy your data to your other device.'}</p><div class="row" style="margin-top:10px"><button class="btn sm" data-act="nav" data-v="settings" data-scroll="backup">Make a backup</button></div></section>`;
   }
 
   function vComing(key) {
@@ -1434,6 +1573,8 @@
   }
 
   function vSettings() {
+    if (!isAdmin()) return `<div class="view"><div class="stack">${signInCard()}${helpCard()}
+      <section class="card"><div class="card-h"><h3>About</h3></div><p class="meta">Herding Cats beta ${VERSION} · Phase 2, milestone ${PHASE2}</p><p class="meta" style="margin-top:4px">© 2026 Natius. All rights reserved.</p></section></div></div>`;
     const st = S.storage;
     const installed = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
     const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -1533,7 +1674,7 @@
   const panel = (title, inner) => `<div class="scrim" data-act="close-bg"><div class="panel" role="dialog" aria-modal="true" aria-labelledby="sh-h"><h2 id="sh-h">${title}</h2>${inner}</div></div>`;
   const childSelect = sel => `<label>Child<select id="f-child">${S.children.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`;
   const delBtn = (sh, what) => `<button type="button" class="btn del${sh.confirm ? ' armed' : ''}" data-act="rec-del">${sh.confirm ? `Tap again to delete ${what}` : 'Delete'}</button>`;
-  const typePills = cur => `<div class="types" role="group" aria-label="What to add">${[['task', 'Homework or project'], ['activity', 'Weekly activity'], ['reminder', 'Reminder']].map(([k, l]) => `<button type="button" data-act="add-type" data-v="${k}" aria-pressed="${k === cur}">${l}</button>`).join('')}</div>`;
+  const typePills = cur => `<div class="types" role="group" aria-label="What to add">${[['task', 'Homework or project'], ['activity', 'Weekly activity'], ['reminder', 'Reminder']].filter(([k]) => isAdmin() || k === 'task').map(([k, l]) => `<button type="button" data-act="add-type" data-v="${k}" aria-pressed="${k === cur}">${l}</button>`).join('')}</div>`;
   const defaultDate = () => (S.view === 'calendar' ? (S.cal.mode === 'month' ? S.cal.sel : (S.cal.cursor >= C.today() ? S.cal.cursor : C.today())) : C.today());
 
   function activitySheet() {
@@ -1660,6 +1801,7 @@
 
   /* ---------- Render ---------- */
   const NAV = [['today', 'Today'], ['calendar', 'Calendar'], ['tasks', 'Tasks'], ['study', 'Study'], ['money', 'Money']];
+  const navList = () => NAV.filter(([k]) => k !== 'money' || seesMoney());
   const TITLES = { today: 'Herding Cats', calendar: 'Calendar', tasks: 'Tasks', study: 'Study planner', money: 'Money', settings: 'Settings' };
 
   function render() {
@@ -1667,22 +1809,23 @@
     const app = $('#app');
     if (S.error) { app.innerHTML = vError(); renderSheet(); return; }
     if (!S.ready) { app.innerHTML = `<div class="solo"><p class="muted center" style="padding-top:40px">${S.syncWait ? 'Fetching your family\'s calendar…' : 'Opening Herding Cats…'}</p></div>`; return; }
-    if (!S.children.length && !S.setupDone) {
+    if (!S.children.length && !S.setupDone && isAdmin()) {
       if (!S.setup) S.setup = { family: S.family || '', rows: [{ name: '', grade: 'Grade 1', colour: 'c1' }] };
       app.innerHTML = vSetup(); renderSheet(); return;
     }
     const v = S.view;
-    const content = v === 'today' ? vToday() : v === 'calendar' ? vCalendar() : v === 'tasks' ? vTasks() : v === 'study' ? vStudy() : v === 'money' ? vMoney() : v === 'settings' ? vSettings() : v === 'child' ? vChild(S.child) : COMING[v] ? vComing(v) : vToday();
-    const fab = ['today', 'calendar', 'child', 'tasks'].includes(v) && S.children.length;
+    if (v === 'money' && !seesMoney()) S.view = 'today';
+    const content = S.view === 'today' ? vToday() : v === 'calendar' ? vCalendar() : v === 'tasks' ? vTasks() : v === 'study' ? vStudy() : v === 'money' ? vMoney() : v === 'settings' ? vSettings() : v === 'child' ? vChild(S.child) : COMING[v] ? vComing(v) : vToday();
+    const fab = ['today', 'calendar', 'child', 'tasks'].includes(v) && S.children.length && canAdd();
     const title = v === 'child' ? (S.children.find(c => c.id === S.child)?.name || 'Child') : TITLES[v] || 'Herding Cats';
     const cur = k => (v === k ? 'aria-current="page"' : '');
     app.innerHTML = `<div class="shell">
       <nav class="side" aria-label="Main">
         <div class="brand">Herding Cats</div><div class="brand-sub"><span class="tagline">family calendar</span> <span class="proto">Beta</span></div>
-        ${NAV.map(([k, l]) => `<button class="navbtn" data-act="nav" data-v="${k}" ${cur(k)}>${ic(k)}${l}${COMING[k] ? `<span class="soon">M${COMING[k].m}</span>` : ''}</button>`).join('')}
+        ${navList().map(([k, l]) => `<button class="navbtn" data-act="nav" data-v="${k}" ${cur(k)}>${ic(k)}${l}${COMING[k] ? `<span class="soon">M${COMING[k].m}</span>` : ''}</button>`).join('')}
         <h3>Children</h3>
         ${S.children.map(c => `<button class="navbtn" data-act="open-child" data-v="${c.id}" ${v === 'child' && S.child === c.id ? 'aria-current="page"' : ''}>${avatar(c)}${esc(c.name)}</button>`).join('')}
-        <button class="navbtn" data-act="child-add">${ic('plus')}Add child</button>
+        ${isAdmin() ? `<button class="navbtn" data-act="child-add">${ic('plus')}Add child</button>` : ''}
         <div style="flex:1"></div>
         <button class="navbtn" data-act="nav" data-v="settings" ${cur('settings')}>${ic('settings')}Settings</button>
       </nav>
@@ -1690,8 +1833,8 @@
         <header class="topbar"><span class="tcat" aria-hidden="true">${FH.cats[v === 'child' ? 'welcome' : v] || FH.cats.today}</span><h2>${esc(title)}</h2><span class="proto">Beta</span><button class="iconbtn gear" data-act="nav" data-v="settings" aria-label="Settings">${ic('settings')}</button></header>
         ${content}
       </main>
-      <nav class="tabbar" aria-label="Main">${NAV.map(([k, l]) => `<button data-act="nav" data-v="${k}" ${cur(k)}>${ic(k)}${l}</button>`).join('')}</nav>
-      ${fab ? `<button class="fab" data-act="add" data-v="${v === 'tasks' ? 'task' : S.lastAdd || 'activity'}"${v === 'child' ? ` data-child="${S.child}"` : ''}>${ic('plus')}Add</button>` : ''}
+      <nav class="tabbar" aria-label="Main">${navList().map(([k, l]) => `<button data-act="nav" data-v="${k}" ${cur(k)}>${ic(k)}${l}</button>`).join('')}</nav>
+      ${fab ? `<button class="fab" data-act="add" data-v="${v === 'tasks' || !isAdmin() ? 'task' : S.lastAdd || 'activity'}"${v === 'child' ? ` data-child="${S.child}"` : ''}>${ic('plus')}Add</button>` : ''}
     </div>${restoreInput()}`;
     renderSheet();
   }
@@ -1706,6 +1849,7 @@
     el.innerHTML = k === 'child' ? childSheet() : k === 'restore' ? restoreSheet() : k === 'activity' ? activitySheet()
       : k === 'reminder' ? reminderSheet() : k === 'event' ? eventSheet() : k === 'task' ? taskSheet() : k === 'taskview' ? taskViewSheet()
       : k === 'period' ? periodSheet() : k === 'exam' ? examSheet() : k === 'session' ? sessionSheet()
+      : k === 'member' ? memberSheet() : k === 'login' ? loginSheet()
       : k === 'account' ? accountSheet() : k === 'entry' ? entrySheet() : k === 'goal' ? goalSheet() : k === 'ledger' ? ledgerSheet() : k === 'settle' ? settleSheet() : k === 'reach' ? reachSheet() : k === 'chore' ? choreSheet() : k === 'digest' ? digestSheet() : k === 'reward' ? rewardSheet() : k === 'term' ? termSheet() : dayoffSheet();
     const who = changedBy();
     if (who) { const p = el.querySelector('.panel'); if (p) p.insertAdjacentHTML('beforeend', `<p class="meta changed">${who}</p>`); }
@@ -1854,7 +1998,7 @@
     if (S.setup.family.trim()) await data.setSetting('familyName', S.setup.family.trim());
     await data.setSetting('setupDone', true);
     S.setup = null; await load(); go('today');
-    toast('Herding Cats is ready. Make a backup in Settings once you have added more.');
+    toast(S.session ? 'Herding Cats is ready. Everything you add is shared with your family.' : 'Herding Cats is ready. Make a backup in Settings once you have added more.');
     tryPersist(false);
   }
   function readSetupInputs() {
@@ -1961,6 +2105,12 @@
         case 'su-finish': readSetupInputs(); await finishSetup(); return;
         case 'acct-signout': FH.account.signOut(); return;
         case 'inv-new': await newInvite(); return;
+        case 'login-add': S.newInvite = null; S.newLogin = null; S.sheet = { kind: 'login', who: S.children.length ? 'child' : 'other', personId: S.children[0]?.id }; renderSheet(); return;
+        case 'login-who': readPeopleForm(); S.sheet.who = v; S.sheet.username = undefined; S.sheet.role = undefined; renderSheet(); return;
+        case 'mem-edit': case 'mem-approve': S.sheet = { kind: 'member', uid: v }; renderSheet(); return;
+        case 'mem-role': readPeopleForm(); renderSheet(); return;
+        case 'mem-decline': await removeMember(v, true); return;
+        case 'mem-remove': if (!S.sheet.armed) { readPeopleForm(); S.sheet.armed = true; renderSheet(); return; } await removeMember(v, false); return;
         case 'inv-copy': { const t = $('#inv-link'); try { await navigator.clipboard.writeText(t.value); toast('Invite link copied. Paste it in a message to the person you\'re inviting.'); } catch (e) { t.select(); toast('Select the link and copy it.'); } return; }
         case 'inv-share': try { await navigator.share({ title: 'Join our family on Herding Cats', text: `Join ${S.family || S.session.familyName} on Herding Cats:`, url: $('#inv-link').value }); } catch (e) { /* closed */ } return;
         case 'inv-cancel': try { await FH.cloud.cancelInvite(S.session.familyId, v); if (S.newInvite && S.newInvite.token === v) S.newInvite = null; await loadPeople(); toast('Invite link cancelled. It no longer works.'); } catch (e) { toast(FH.cloud.message(e)); } render(); return;
@@ -2208,6 +2358,8 @@
     const f = ev.target.dataset.form;
     try {
       if (f === 'child') await saveChild();
+      if (f === 'member') await saveMember();
+      if (f === 'login') await saveLogin();
       if (f === 'task') await saveTask();
       if (f === 'period') await savePeriod();
       if (f === 'account') await saveAccount();
@@ -2236,6 +2388,7 @@
   });
 
   document.addEventListener('change', ev => {
+    if (ev.target.id === 'f-person' && S.sheet && S.sheet.kind === 'login') { readPeopleForm(); S.sheet.username = undefined; renderSheet(); return; }
     if (ev.target.id === 'imp-photo') { const f = ev.target.files && ev.target.files[0]; ev.target.value = ''; if (f && S.study.imp) readPhoto(f); return; }
     if (ev.target.id !== 'restore-file') return;
     const file = ev.target.files && ev.target.files[0];

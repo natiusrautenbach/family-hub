@@ -72,7 +72,16 @@ try {
   await pw.click('[data-gate=to-signup]'); await pw.fill('#g-name', 'Wife'); await pw.fill('#g-email', 'wife@example.com'); await pw.fill('#g-pass', 'password123');
   await submit(pw, 'signup'); await pw.waitForSelector('[data-gate-form=join]', { timeout: 20000 });
   ok((await pw.innerText('.hero')).includes('Join The Rautenbachs'), 'invite opens the Join screen');
-  await submit(pw, 'join'); await pw.waitForSelector('.shell', { timeout: 30000 });
+  await submit(pw, 'join'); await pw.waitForSelector('[data-gate=pending-check]', { timeout: 20000 });
+  ok((await pw.innerText('.hero')).includes('Waiting for approval'), 'joiner waits for approval');
+  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await pg.waitForSelector('[data-act=mem-approve]', { timeout: 20000 });
+  await pg.click('[data-act=mem-approve]'); await pg.waitForSelector('[data-form=member]');
+  await pg.click('[data-form=member] button[type=submit]');
+  await pg.waitForFunction(() => (FH.app.S.members || []).some(m => m.name === 'Wife' && m.role === 'parent'), null, { timeout: 15000 }).catch(() => {});
+  ok(await pg.evaluate(() => (FH.app.S.members || []).some(m => m.name === 'Wife' && m.role === 'parent')), 'owner approves her as a parent');
+  await pw.click('[data-gate=pending-check]');
+  await pw.waitForSelector('.shell', { timeout: 30000 });
   await pw.waitForFunction(() => FH.app.S.children.some(c => c.name === 'Ava'), null, { timeout: 20000 }).catch(() => {});
   ok(await pw.evaluate(() => FH.app.S.children.map(c => c.name).join()) === 'Ava', "wife's phone receives the family's data");
   if (await pw.locator('[data-act=digest-close]').count()) await pw.click('[data-act=digest-close]');
@@ -99,6 +108,42 @@ try {
   await pg.evaluate(() => { const r = FH.app.S.reminders.find(x => x.title === 'Swimming gala'); FH.app.S.sheet = { kind: 'reminder', id: r.id }; FH.app.render(); });
   ok((await pg.innerText('#sheet')).includes('Last changed by Wife'), 'form shows who last changed it');
   await pg.keyboard.press('Escape');
+
+  // ---------- A child's username login sees only their own items ----------
+  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await pg.click('[data-act=child-add] >> visible=true'); await pg.fill('#f-name', 'Liam'); await pg.click('.panel button[type=submit]'); await pg.waitForTimeout(400);
+  const addTask = async (who, title) => { await pg.click('[data-act=nav][data-v=tasks] >> visible=true'); await pg.click('.fab'); await pg.selectOption('#f-child', { label: who }); await pg.fill('#f-title', title); await pg.fill('#f-date', '2026-11-25'); await pg.click('.panel button[type=submit]'); await pg.waitForTimeout(400); };
+  await addTask('Ava', 'Ava maths'); await addTask('Liam', 'Liam spelling');
+  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await pg.waitForSelector('[data-act=login-add]'); await pg.click('[data-act=login-add]'); await pg.waitForSelector('[data-form=login]');
+  await pg.selectOption('#f-person', { label: 'Ava' }); await pg.waitForTimeout(150);
+  await pg.fill('#f-pass', 'kitty1234'); await pg.uncheck('#f-money');
+  await pg.click('[data-form=login] button[type=submit]');
+  await pg.waitForSelector('#new-login', { timeout: 20000 });
+  const code = await pg.evaluate(() => FH.account.session.familyCode);
+  ok((await pg.innerText('#new-login')).includes('ava'), 'owner adds a username for Ava');
+  ok(await pg.evaluate(() => FH.account.session.uid === FH.cloud.user().uid), 'owner is still signed in after adding it');
+
+  const { pg: pk } = await newPage();
+  await pk.goto(URL); await pk.waitForSelector('#g-email', { timeout: 30000 });
+  await pk.click('[data-gate=to-username]'); await pk.fill('#g-code', code); await pk.fill('#g-user', 'ava'); await pk.fill('#g-pass', 'kitty1234');
+  await submit(pk, 'username'); await pk.waitForSelector('.shell', { timeout: 30000 });
+  await pk.waitForFunction(() => FH.app.S.tasks.length > 0, null, { timeout: 20000 }).catch(() => {});
+  ok(await pk.evaluate(() => FH.account.session.role) === 'child_view', 'Ava signs in with the family username');
+  ok(await pk.evaluate(() => FH.app.S.children.map(c => c.name).join()) === 'Ava', "Ava's phone only has Ava");
+  ok(await pk.evaluate(() => FH.app.S.tasks.map(t => t.title).join()) === 'Ava maths', "Ava's phone only has Ava's tasks");
+  ok(await pk.evaluate(() => FH.app.S.reminders.length) > 0 && !(await pk.locator('.tabbar [data-v=money]').count()), 'Ava sees her reminders, and no Money tab');
+  ok(await pk.evaluate(() => FH.app.S.accounts.length) === 0, 'no money data on her phone');
+
+  // ---------- Removing someone ----------
+  const wifeUid = await pg.evaluate(() => FH.app.S.members.find(m => m.name === 'Wife').uid);
+  await pg.click(`[data-act=mem-edit][data-v="${wifeUid}"]`); await pg.waitForSelector('[data-form=member]');
+  await pg.click('[data-act=mem-remove]'); await pg.click('[data-act=mem-remove]');
+  await pg.waitForFunction(() => !FH.app.S.members.some(m => m.name === 'Wife'), null, { timeout: 15000 }).catch(() => {});
+  ok(!(await pg.evaluate(() => FH.app.S.members.some(m => m.name === 'Wife'))), 'owner removes the wife');
+  await pw.reload();
+  await pw.waitForSelector('#g-family, #g-email', { timeout: 30000 }).catch(() => {});
+  ok(await pw.locator('#g-family').count() === 1 && await pw.evaluate(async () => (await indexedDB.databases()).every(d => !d.name.startsWith('hc-'))), "removed person loses access and the family's data leaves her phone");
 
   const { pg: pc } = await newPage();
   await pc.goto(link); await pc.waitForSelector('#g-email', { timeout: 30000 });

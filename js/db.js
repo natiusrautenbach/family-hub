@@ -109,45 +109,20 @@
      One rules table decides who may do what. The beta has only the parent
      role; the two child roles are defined now so they can be switched on
      later without changing the logic. */
+  /* Phase 2: the family server only sends each person what their role may see, so
+     everything on this device may be read; this table limits what they may change. */
   const RULES = {
     parent: { '*': ['read', 'create', 'update', 'delete'] },
-    child_view: {
-      people: ['read:own'],
-      activities: ['read:own'],
-      reminders: ['read:own'],
-      terms: ['read'],
-      daysoff: ['read'],
-      tasks: ['read:own'],
-      periods: ['read:own'],
-      exams: ['read:own'],
-      sessions: ['read:own'],
-      accounts: ['read:own'],
-      entries: ['read:own'],
-      goals: ['read:own'],
-      ledger: ['read:own'],
-      chores: ['read:own'],
-      rewards: ['read:own'],
-    },
+    carer: { '*': ['read'], tasks: ['read', 'update'] },
+    child_view: { '*': ['read'] },
     child_limited: {
-      people: ['read:own'],
-      activities: ['read:own'],
-      reminders: ['read:own'],
-      terms: ['read'],
-      daysoff: ['read'],
-      tasks: ['read:own', 'update:own'],
-      periods: ['read:own'],
-      exams: ['read:own'],
-      sessions: ['read:own', 'update:own'],
-      accounts: ['read:own'],
-      entries: ['read:own'],
-      goals: ['read:own'],
-      ledger: ['read:own'],
-      chores: ['read:own'],
-      rewards: ['read:own'],
-      approvals: ['read:own', 'create:own'],
+      '*': ['read'],
+      tasks: ['read', 'create:own', 'update:own'],
+      sessions: ['read', 'update:own'],
+      chores: ['read', 'update:own'],
     },
   };
-  const PARENT_ONLY = ['users', 'meta'];
+  const PARENT_ONLY = ['users'];
 
   function can(user, action, store, rec) {
     if (!user) return false;
@@ -260,13 +235,13 @@
 
     async getSetting(key, fallback) { const r = await raw.get('meta', key); return r ? r.value : fallback; },
     async setSetting(key, value) {
-      if (!can(currentUser, 'update', 'meta')) throw new AccessError('change', 'settings');
+      if (!currentUser) throw new AccessError('change', 'settings');
       await raw.put('meta', { id: key, value, updatedAt: now() });
     },
 
     /* ---------- Backup ---------- */
     async exportBackup() {
-      if (!can(currentUser, 'read', 'meta')) throw new AccessError('export', 'a backup');
+      if (!currentUser || currentUser.role !== 'parent') throw new AccessError('export', 'a backup');
       const stores = {};
       for (const s of Object.keys(SCHEMA)) stores[s] = await raw.all(s);
       return { app: 'family-hub', format: BACKUP_FORMAT, schema: DB_VERSION, exportedAt: now(), device: deviceId, stores };
@@ -290,7 +265,7 @@
 
     /* Replaces everything on this device with the backup. The device id is kept. */
     async restoreBackup(obj) {
-      if (!can(currentUser, 'delete', 'meta')) throw new AccessError('restore', 'a backup');
+      if (!currentUser || currentUser.role !== 'parent') throw new AccessError('restore', 'a backup');
       data.checkBackup(obj);
       const stores = Object.keys(SCHEMA);
       const map = {};
@@ -342,6 +317,11 @@
       DB_NAME = name;
     },
     get databaseName() { return DB_NAME; },
+    /* Removes a family's data from this device (e.g. after being removed from the family). */
+    async dropDatabase(name) {
+      if (name === DB_NAME && dbp) { try { (await dbp).close(); } catch (e) { /* not open */ } dbp = null; }
+      await new Promise(res => { const r = indexedDB.deleteDatabase(name); r.onsuccess = r.onerror = r.onblocked = () => res(); });
+    },
 
     async ready(member) { await open(); return member ? data.signInAs(member) : data.signIn(); },
   };

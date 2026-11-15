@@ -60,13 +60,31 @@
     unavailable: "Can't reach the internet. Check your connection and try again.",
     'sdk-unavailable': "Can't reach Herding Cats' sign-in service. Check your internet connection and try again.",
     'invite-gone': 'This invite link has been cancelled. Ask for a new one.',
+    'username-taken': 'That username is already used in your family. Choose another.',
+    'username-unknown': "That family code and username don't match. Check them with your family administrator.",
+    'family-full': 'Your family already has 8 people, the most a family can have.',
+    'username-format': 'A username is 2 to 20 small letters or numbers, with no spaces, e.g. liam or liam2.',
+    'invite-refused': "This invite can't be used: it may have expired or been used, or the family is full (8 people).",
   };
+  /* Records: whose they are and whether they are money, so the server can share each
+     one only with the people allowed to see it. */
+  const MONEY = ['accounts', 'entries', 'goals', 'ledger', 'chores', 'rewards'];
+  const recOwner = (store, rec) => store === 'people' ? rec.id : ['terms', 'daysoff'].includes(store) ? '_family' : (rec.owner || '_none');
+  /* Family usernames sign in with an address the app makes up; nobody ever sees it. */
+  const loginKey = (code, username) => `${String(code || '').toUpperCase()}-${String(username || '').toLowerCase()}`;
+  const usernameOk = u => /^[a-z0-9]{2,20}$/.test(u);
+  const loginEmail = (code, username) => `u-${code.toLowerCase()}-${username}-${Math.random().toString(36).slice(2, 8)}@herding-cats-1e399.firebaseapp.com`;
+  const memberOut = (uid, m) => ({
+    uid, role: m.role, name: m.displayName, email: m.email || '', joinedAt: m.joinedAt && m.joinedAt.toMillis ? m.joinedAt.toMillis() : (m.joinedAt || 0),
+    personId: m.personId || null, requested: m.requested || null, username: m.username || null,
+    kids: m.kids || [], siblings: !!m.siblings, money: m.money !== false,
+  });
   const message = err => MESSAGES[err && err.code] || (err && err.message) || 'Something went wrong. Try again.';
   const fail = code => Object.assign(new Error(MESSAGES[code] || code), { code });
 
   /* ---------- Firebase ---------- */
   function firebaseBackend() {
-    let A, F, auth, db, starting = null;
+    let A, F, AppM, auth, db, starting = null;
 
     function init() {
       if (starting) return starting;
@@ -76,7 +94,7 @@
           mods = await Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-auth.js'), import(SDK + 'firebase-firestore.js')]);
         } catch (e) { starting = null; throw fail('sdk-unavailable'); }
         const [appM, authM, fsM] = mods;
-        A = authM; F = fsM;
+        A = authM; F = fsM; AppM = appM;
         const app = appM.initializeApp(emulated ? Object.assign({}, CONFIG, { projectId: 'demo-herding-cats' }) : CONFIG);
         auth = A.getAuth(app);
         /* The database keeps its own copy on the device, so changes made offline are
@@ -93,6 +111,18 @@
       return starting;
     }
     const who = u => u ? { uid: u.uid, email: u.email || '', name: u.displayName || '', provider: (u.providerData[0] || {}).providerId || 'password' } : null;
+    async function withTempUser(email, password, fn) {
+      const app2 = AppM.initializeApp(emulated ? Object.assign({}, CONFIG, { projectId: 'demo-herding-cats' }) : CONFIG, 'login-' + Date.now());
+      try {
+        const auth2 = A.initializeAuth(app2, { persistence: A.inMemoryPersistence });
+        const db2 = F.getFirestore(app2);
+        if (emulated) { A.connectAuthEmulator(auth2, 'http://127.0.0.1:9099', { disableWarnings: true }); F.connectFirestoreEmulator(db2, '127.0.0.1', 8080); }
+        const cred = await A.createUserWithEmailAndPassword(auth2, email, password);
+        await fn(db2, cred.user.uid);
+        await A.signOut(auth2);
+        return cred.user.uid;
+      } finally { AppM.deleteApp(app2).catch(() => {}); }
+    }
 
     return {
       kind: 'firebase',
@@ -128,7 +158,7 @@
           const [fs, ms] = await Promise.all([F.getDoc(F.doc(db, 'families', fid)), F.getDoc(F.doc(db, 'families', fid, 'members', u.uid))]);
           if (!fs.exists() || !ms.exists()) return null;
           const f = fs.data(), m = ms.data();
-          return { family: { id: fid, name: f.name, code: f.code, ownerUid: f.ownerUid }, member: { role: m.role, name: m.displayName, personId: m.personId || null } };
+          return { family: { id: fid, name: f.name, code: f.code, ownerUid: f.ownerUid, memberCount: f.memberCount || 0 }, member: memberOut(u.uid, m) };
         } catch (e) {
           if (e.code === 'permission-denied') return null; // removed from the family
           throw e;
@@ -143,7 +173,7 @@
         const code = familyCode();
         const b = F.writeBatch(db);
         b.set(fref, {
-          name: familyName, ownerUid: u.uid, code, plan: 'beta', maxMembers: MAX_MEMBERS,
+          name: familyName, ownerUid: u.uid, code, plan: 'beta', maxMembers: MAX_MEMBERS, memberCount: 1,
           createdAt: F.serverTimestamp(), consent: { by: u.uid, at: F.serverTimestamp(), version: CONSENT_VERSION },
         });
         b.set(F.doc(db, 'families', fref.id, 'members', u.uid), {
@@ -162,16 +192,30 @@
       pushRecord(fid, store, rec) {
         if (!db) return Promise.reject(fail('sdk-unavailable'));
         return F.setDoc(F.doc(db, 'families', fid, 'records', store + '~' + rec.id), {
-          store, id: rec.id, updatedAt: rec.updatedAt || '', by: rec.updatedBy || '', deleted: !!rec.deleted,
+          store, id: rec.id, owner: recOwner(store, rec), money: MONEY.includes(store), updatedAt: rec.updatedAt || '', by: rec.updatedBy || '', deleted: !!rec.deleted,
           json: JSON.stringify(rec), syncAt: F.serverTimestamp(),
         });
       },
-      /* Calls back with records changed on the server since a moment (milliseconds). */
-      listen(fid, sinceMs, onChanges, onError) {
+      /* Calls back with records changed on the server since a moment (milliseconds).
+         Each role listens only to what it may see (the server checks the same). */
+      listen(fid, sinceMs, onChanges, onError, who) {
         if (!db) throw fail('sdk-unavailable');
         const col = F.collection(db, 'families', fid, 'records');
-        const q = sinceMs ? F.query(col, F.where('syncAt', '>', F.Timestamp.fromMillis(sinceMs))) : col;
-        return F.onSnapshot(q, snap => {
+        const W = F.where, since = sinceMs ? [W('syncAt', '>', F.Timestamp.fromMillis(sinceMs))] : [];
+        const r = (who && who.role) || 'parent';
+        const parts = [];
+        if (['owner', 'parent'].includes(r)) parts.push([]);
+        else if (r === 'carer') {
+          parts.push([W('owner', '==', '_family')]);
+          if ((who.kids || []).length) parts.push([W('money', '==', false), W('owner', 'in', who.kids.slice(0, 10))]);
+        } else if (r === 'child_view' || r === 'child_limited') {
+          const own = [W('owner', 'in', [who.personId || '_none', '_family'])];
+          parts.push(who.money === false ? [W('money', '==', false), ...own] : own);
+          if (who.siblings) parts.push([W('store', 'in', ['people', 'activities'])]);
+        }
+        const unsubs = parts.map(p => F.onSnapshot(p.length || since.length ? F.query(col, ...p, ...since) : col, snapHandler, onError));
+        return () => unsubs.forEach(u => u());
+        function snapHandler(snap) {
           const list = [];
           for (const ch of snap.docChanges()) {
             if (ch.type === 'removed') continue;
@@ -180,13 +224,58 @@
             list.push({ store: d.store, rec, syncAt: d.syncAt ? d.syncAt.toMillis() : 0, local: ch.doc.metadata.hasPendingWrites });
           }
           onChanges(list, snap.metadata.fromCache);
-        }, onError);
+        }
       },
 
       /* ---------- People in the family ---------- */
       async members(fid) {
         const qs = await F.getDocs(F.collection(db, 'families', fid, 'members'));
-        return qs.docs.map(d => { const m = d.data(); return { uid: d.id, role: m.role, name: m.displayName, email: m.email || '', joinedAt: m.joinedAt ? m.joinedAt.toMillis() : 0 }; });
+        return qs.docs.map(d => memberOut(d.id, d.data()));
+      },
+      async family(fid) { const d = await F.getDoc(F.doc(db, 'families', fid)); const f = d.data() || {}; return { memberCount: f.memberCount || 0, maxMembers: f.maxMembers || MAX_MEMBERS, code: f.code }; },
+      recount: (fid, n) => F.updateDoc(F.doc(db, 'families', fid), { memberCount: n }),
+      /* Approve someone, or change what they can see. */
+      updateMember(fid, uid, fields) {
+        const out = {};
+        for (const k of ['role', 'displayName', 'personId', 'kids', 'siblings', 'money']) if (k in fields) out[k === 'name' ? 'displayName' : k] = fields[k];
+        return F.updateDoc(F.doc(db, 'families', fid, 'members', uid), out);
+      },
+      async removeMember(fid, m, code) {
+        const b = F.writeBatch(db);
+        b.delete(F.doc(db, 'families', fid, 'members', m.uid));
+        if (m.username) b.delete(F.doc(db, 'logins', loginKey(code, m.username)));
+        b.update(F.doc(db, 'families', fid), { memberCount: F.increment(-1) });
+        await b.commit();
+      },
+      /* A family username and password for someone without email (e.g. a child).
+         The new sign-in is made in a separate, temporary connection so the
+         administrator stays signed in. */
+      async createLogin(fid, code, o) {
+        const username = String(o.username || '').toLowerCase();
+        if (!usernameOk(username)) throw fail('username-format');
+        const key = loginKey(code, username);
+        if (!o.replacing && (await F.getDoc(F.doc(db, 'logins', key))).exists()) throw fail('username-taken');
+        const email = loginEmail(code, username);
+        const uid = await withTempUser(email, o.password, async (db2, uid2) => {
+          await F.setDoc(F.doc(db2, 'users', uid2), { familyId: fid, displayName: o.name, email: '', createdAt: F.serverTimestamp() });
+        });
+        const b = F.writeBatch(db);
+        b.set(F.doc(db, 'families', fid, 'members', uid), {
+          uid, role: o.role, displayName: o.name, email: '', joinedAt: F.serverTimestamp(), personId: o.personId || null,
+          username, kids: o.kids || [], siblings: !!o.siblings, money: o.money !== false, createdBy: auth.currentUser.uid,
+        });
+        b.set(F.doc(db, 'logins', key), { email, familyId: fid, uid });
+        if (o.replacing) b.delete(F.doc(db, 'families', fid, 'members', o.replacing));
+        else b.update(F.doc(db, 'families', fid), { memberCount: F.increment(1) });
+        await b.commit();
+        return uid;
+      },
+      async signInUsername(code, username, password) {
+        const d = await F.getDoc(F.doc(db, 'logins', loginKey(code, username)));
+        if (!d.exists()) throw fail('username-unknown');
+        try { await A.signInWithEmailAndPassword(auth, d.data().email, password); }
+        catch (e) { if (e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' || e.code === 'auth/user-not-found') throw fail('username-unknown'); throw e; }
+        return who(auth.currentUser);
       },
       async createInvite(fid, familyName, role) {
         const u = auth.currentUser;
@@ -215,14 +304,16 @@
         if (!inv.exists()) throw fail('invite-gone');
         const v = inv.data();
         const b = F.writeBatch(db);
-        b.set(F.doc(db, 'families', fid, 'members', u.uid), { uid: u.uid, role: v.role, displayName, email: u.email || '', joinedAt: F.serverTimestamp(), personId: null, invite: token });
+        b.set(F.doc(db, 'families', fid, 'members', u.uid), { uid: u.uid, role: 'pending', requested: v.role, displayName, email: u.email || '', joinedAt: F.serverTimestamp(), personId: null, invite: token });
         b.update(inv.ref, { usedBy: u.uid, usedAt: F.serverTimestamp() });
+        b.update(F.doc(db, 'families', fid), { memberCount: F.increment(1) });
         b.set(F.doc(db, 'users', u.uid), { familyId: fid, displayName, email: u.email || '', createdAt: F.serverTimestamp() });
-        await b.commit();
+        try { await b.commit(); }
+        catch (e) { if (e.code === 'permission-denied') throw fail('invite-refused'); throw e; }
         if (displayName && displayName !== u.displayName) await A.updateProfile(u, { displayName }).catch(() => {});
         const fs = await F.getDoc(F.doc(db, 'families', fid));
         const f = fs.data();
-        return { family: { id: fid, name: f.name, code: f.code, ownerUid: f.ownerUid }, member: { role: v.role, name: displayName, personId: null } };
+        return { family: { id: fid, name: f.name, code: f.code, ownerUid: f.ownerUid }, member: memberOut(u.uid, { role: 'pending', requested: v.role, displayName }) };
       },
     };
   }
@@ -271,12 +362,12 @@
         if (!u || !u.familyId) return null;
         const f = D.families[u.familyId], m = (D.members[u.familyId] || {})[D.session];
         if (!f || !m) return null;
-        return { family: { id: u.familyId, name: f.name, code: f.code, ownerUid: f.ownerUid }, member: { role: m.role, name: m.displayName, personId: null } };
+        return { family: { id: u.familyId, name: f.name, code: f.code, ownerUid: f.ownerUid, memberCount: f.memberCount || 0 }, member: memberOut(D.session, m) };
       },
       async createFamily({ familyName, displayName }) {
         await wait();
         const fid = id(), code = familyCode(), a = who(D.session);
-        D.families[fid] = { name: familyName, ownerUid: D.session, code, plan: 'beta', maxMembers: MAX_MEMBERS };
+        D.families[fid] = { name: familyName, ownerUid: D.session, code, plan: 'beta', maxMembers: MAX_MEMBERS, memberCount: 1 };
         D.members[fid] = { [D.session]: { role: 'owner', displayName, email: a.email } };
         D.users[D.session] = { familyId: fid, displayName };
         save();
@@ -306,7 +397,37 @@
       },
       async members(fid) {
         await wait();
-        return Object.entries(D.members[fid] || {}).map(([uid, m]) => ({ uid, role: m.role, name: m.displayName, email: m.email || '', joinedAt: m.joinedAt || 0 }));
+        return Object.entries(D.members[fid] || {}).map(([uid, m]) => memberOut(uid, m));
+      },
+      async family(fid) { const f = D.families[fid] || {}; return { memberCount: f.memberCount || 0, maxMembers: f.maxMembers || MAX_MEMBERS, code: f.code }; },
+      async recount(fid, n) { D.families[fid].memberCount = n; save(); },
+      async updateMember(fid, uid, fields) { await wait(); Object.assign(D.members[fid][uid], fields); save(); },
+      async removeMember(fid, m, code) {
+        await wait(); delete D.members[fid][m.uid];
+        if (m.username) delete (D.logins || {})[loginKey(code, m.username)];
+        D.families[fid].memberCount = Math.max(1, (D.families[fid].memberCount || 1) - 1); save();
+      },
+      async createLogin(fid, code, o) {
+        await wait();
+        const username = String(o.username || '').toLowerCase();
+        if (!usernameOk(username)) throw fail('username-format');
+        D.logins = D.logins || {};
+        const key = loginKey(code, username);
+        if (!o.replacing && D.logins[key]) throw fail('username-taken');
+        const email = loginEmail(code, username), uid = id();
+        D.accounts[email] = { uid, email, name: o.name, password: o.password, provider: 'password' };
+        D.users[uid] = { familyId: fid, displayName: o.name };
+        D.members[fid][uid] = { role: o.role, displayName: o.name, email: '', joinedAt: Date.now(), personId: o.personId || null, username, kids: o.kids || [], siblings: !!o.siblings, money: o.money !== false };
+        D.logins[key] = { email, familyId: fid, uid };
+        if (o.replacing) delete D.members[fid][o.replacing]; else D.families[fid].memberCount = (D.families[fid].memberCount || 1) + 1;
+        save(); return uid;
+      },
+      async signInUsername(code, username, password) {
+        await wait();
+        const l = (D.logins || {})[loginKey(code, username)];
+        const a = l && D.accounts[l.email];
+        if (!a || a.password !== password) throw fail('username-unknown');
+        D.session = a.uid; save(); return who(a.uid);
       },
       async createInvite(fid, familyName, role) {
         await wait();
@@ -328,12 +449,13 @@
         if (v.usedBy || v.expiresAt < Date.now()) throw fail('permission-denied');
         const a = who(D.session);
         D.members[fid] = D.members[fid] || {};
-        D.members[fid][D.session] = { role: v.role, displayName, email: a.email, joinedAt: Date.now() };
+        D.members[fid][D.session] = { role: 'pending', requested: v.role, displayName, email: a.email, joinedAt: Date.now() };
         v.usedBy = D.session;
+        D.families[fid].memberCount = (D.families[fid].memberCount || 1) + 1;
         D.users[D.session] = { familyId: fid, displayName };
         save();
         const f = D.families[fid];
-        return { family: { id: fid, name: f.name, code: f.code, ownerUid: f.ownerUid }, member: { role: v.role, name: displayName, personId: null } };
+        return { family: { id: fid, name: f.name, code: f.code, ownerUid: f.ownerUid }, member: memberOut(D.session, D.members[fid][D.session]) };
       },
     };
   }

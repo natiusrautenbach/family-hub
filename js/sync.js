@@ -11,7 +11,8 @@
   const data = FH.data;
   const cloud = FH.cloud;
 
-  const st = { on: false, fid: null, waiting: 0, lastSync: null, error: '', firstDone: false };
+  const st = { on: false, fid: null, who: null, waiting: 0, lastSync: null, error: '', firstDone: false };
+  const ADMIN = ['owner', 'parent'];
   const watchers = [];
   let unsub = null, firstResolve = null, refreshT = null, flushing = false;
   const sending = new Set();
@@ -76,6 +77,8 @@
   }
   function onError(e) {
     st.error = cloud.message(e);
+    /* No longer allowed to see the family (removed, or role changed): let the account check. */
+    if (e && e.code === 'permission-denied' && FH.account && FH.account.recheck) FH.account.recheck();
     console.warn('Sync: listening stopped', e);
     notify();
     // Try again shortly (e.g. after a brief loss of access).
@@ -89,7 +92,7 @@
     try {
       if (!cloud.ready) await cloud.init(); // opened offline: connect now if we can
       const since = await data.getLocal('syncedTo', 0);
-      unsub = cloud.listen(st.fid, since ? since - 120000 : 0, onRemote, onError);
+      unsub = cloud.listen(st.fid, since ? since - 120000 : 0, onRemote, onError, st.who);
       flush();
     } catch (e) {
       st.error = navigator.onLine ? cloud.message(e) : '';
@@ -105,12 +108,16 @@
     async start(session) {
       if (!cloud || !cloud.listen) return;
       st.on = true; st.fid = session.familyId;
+      st.who = { role: session.role, personId: session.personId, kids: session.kids || [], siblings: !!session.siblings, money: session.money !== false };
       const first = new Promise(r => { firstResolve = r; });
       data.onChange = (store, rec) => { data.outbox.add(store, rec).then(() => { recount(); send(store, rec); }); };
       /* The first time this device syncs this family, send what it already has. */
-      if (!(await data.getLocal('syncSeeded', false))) {
+      /* The first time this device syncs this family, send what it already has. Records
+         sent before milestone 2.3 are sent again once, now saying whose they are. */
+      if (ADMIN.includes(session.role) && (!(await data.getLocal('syncSeeded', false)) || !(await data.getLocal('syncV2', false)))) {
         for (const [store, rec] of await data.allSynced()) await data.outbox.add(store, rec);
         await data.setLocal('syncSeeded', true);
+        await data.setLocal('syncV2', true);
       }
       await recount();
       await listen();

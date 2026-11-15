@@ -63,7 +63,7 @@ jobs:
         run: |
           printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
           export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
-          npx --yes firebase-tools@13 deploy --only hosting,firestore:rules --project herding-cats-1e399 --non-interactive
+          npx --yes firebase-tools@13 deploy --only hosting,firestore:rules,firestore:indexes --project herding-cats-1e399 --non-interactive
           rm -f "$RUNNER_TEMP/sa.json"
       - name: Check the live site serves this version
         if: steps.key.outputs.ready == 'yes'

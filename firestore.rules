@@ -4,38 +4,44 @@ rules_version = '2';
 // rules on every request, so a phone only ever receives what its user may see.
 //
 //   users/{uid}                    which family a person belongs to (only they can see it)
-//   families/{fid}                 the family: name, administrator, plan, consent
-//   families/{fid}/members/{uid}   each person in the family and their role
+//   logins/{CODE-username}         family usernames: which sign-in email a username uses
+//   families/{fid}                 the family: name, administrator, plan, size, consent
+//   families/{fid}/members/{uid}   each person in the family, their role and what they see
 //   families/{fid}/invites/{token} invite links (single use, expire after 7 days)
 //   families/{fid}/records/{rid}   the family's data, one document per record (synced)
+//
+// Roles: owner (family administrator), parent, carer (chosen children, no money),
+// child_view (own items), child_limited (own items, ticks off and adds homework),
+// pending (joined with a link, waiting for approval: sees nothing yet).
 service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() { return request.auth != null; }
     function famPath(fid) { return /databases/$(database)/documents/families/$(fid); }
     function memberPath(fid, uid) { return /databases/$(database)/documents/families/$(fid)/members/$(uid); }
-    function isMember(fid) { return signedIn() && exists(memberPath(fid, request.auth.uid)); }
-    function myRole(fid) { return get(memberPath(fid, request.auth.uid)).data.role; }
-    function isOwner(fid) { return isMember(fid) && myRole(fid) == 'owner'; }
-    function shortText(v, max) { return v is string && v.size() > 0 && v.size() <= max; }
     function invitePath(fid, token) { return /databases/$(database)/documents/families/$(fid)/invites/$(token); }
-    function canWrite(fid) { return isMember(fid) && myRole(fid) in ['owner', 'parent']; }
+    function isMember(fid) { return signedIn() && exists(memberPath(fid, request.auth.uid)); }
+    function me(fid) { return get(memberPath(fid, request.auth.uid)).data; }
+    function myRole(fid) { return me(fid).role; }
+    function isOwner(fid) { return isMember(fid) && myRole(fid) == 'owner'; }
+    function isAdmin(fid) { return isMember(fid) && myRole(fid) in ['owner', 'parent']; }
+    function shortText(v, max) { return v is string && v.size() > 0 && v.size() <= max; }
+    function count(f) { return f.get('memberCount', 0); } // families made before 2.3 have no count yet (recounted by an administrator)
+    function grantable(r) { return r in ['parent', 'carer', 'child_view', 'child_limited']; }
+    // What an administrator may set on a person.
+    function memberFields() { return ['uid', 'role', 'displayName', 'email', 'joinedAt', 'personId', 'invite', 'requested', 'username', 'kids', 'siblings', 'money', 'createdBy']; }
+    function validSettings(d) {
+      return d.get('kids', []) is list && d.get('kids', []).size() <= 10
+        && d.get('siblings', false) is bool && d.get('money', true) is bool
+        && (d.get('personId', null) == null || d.get('personId', null) is string)
+        && (!(d.role in ['child_view', 'child_limited']) || d.get('personId', null) is string);
+    }
     // The kinds of record the app keeps (must match SYNCED in js/db.js).
     function knownStore(s) {
       return s in ['people', 'activities', 'reminders', 'terms', 'daysoff', 'tasks', 'periods', 'exams', 'sessions',
                    'accounts', 'entries', 'goals', 'ledger', 'chores', 'rewards'];
     }
-    // Joining with an invite: unused, not expired, same role as the invite, and the
-    // invite is marked as used by this person in the same batch.
-    function joiningWithInvite(fid, uid) {
-      let token = request.resource.data.invite;
-      let inv = get(invitePath(fid, token));
-      return token is string
-        && inv.data.usedBy == null
-        && inv.data.expiresAt > request.time
-        && request.resource.data.role == inv.data.role
-        && getAfter(invitePath(fid, token)).data.usedBy == uid;
-    }
+    function moneyStore(s) { return s in ['accounts', 'entries', 'goals', 'ledger', 'chores', 'rewards']; }
 
     // Each person's pointer to their family. Only they can read or change it.
     match /users/{uid} {
@@ -45,57 +51,117 @@ service cloud.firestore {
         && (request.resource.data.familyId == null || request.resource.data.familyId is string);
     }
 
+    // Family usernames. Anyone may look one up (to sign in); it holds only the sign-in
+    // address the app made up for that username, never personal details.
+    match /logins/{key} {
+      allow get: if true;
+      allow create, update: if signedIn() && isAdmin(request.resource.data.familyId)
+        && request.resource.data.keys().hasOnly(['email', 'familyId', 'uid'])
+        && key.matches('^[A-Z0-9]{6}-[a-z0-9]{2,20}$');
+      allow delete: if signedIn() && isAdmin(resource.data.familyId);
+    }
+
     match /families/{fid} {
       allow read: if isMember(fid);
 
       // A family is created together with its owner's member record, in one batch.
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['name', 'ownerUid', 'code', 'plan', 'maxMembers', 'createdAt', 'consent'])
+        && request.resource.data.keys().hasOnly(['name', 'ownerUid', 'code', 'plan', 'maxMembers', 'memberCount', 'createdAt', 'consent'])
         && request.resource.data.ownerUid == request.auth.uid
         && shortText(request.resource.data.name, 80)
+        && request.resource.data.code.matches('^[A-Z0-9]{6}$')
         && request.resource.data.plan == 'beta'
         && request.resource.data.maxMembers == 8
+        && request.resource.data.get('memberCount', 1) == 1
         && request.resource.data.consent.by == request.auth.uid
         && getAfter(memberPath(fid, request.auth.uid)).data.role == 'owner';
 
-      // Only the owner may rename the family; the owner and plan can't be changed here.
-      allow update: if isOwner(fid)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
-        && shortText(request.resource.data.name, 80);
+      allow update: if (
+          // The owner renames the family.
+          (isOwner(fid)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+            && shortText(request.resource.data.name, 80))
+          ||
+          // Administrators keep the head count right (people added or removed).
+          (isAdmin(fid)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberCount'])
+            && request.resource.data.memberCount is int
+            && request.resource.data.memberCount >= 1
+            && request.resource.data.memberCount <= resource.data.maxMembers)
+          ||
+          // Someone joining with an invite adds one to the count, never past the limit.
+          (signedIn() && !isMember(fid)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberCount'])
+            && request.resource.data.memberCount == count(resource.data) + 1
+            && request.resource.data.memberCount <= resource.data.maxMembers
+            && getAfter(memberPath(fid, request.auth.uid)).data.role == 'pending')
+        );
       allow delete: if isOwner(fid);
 
       match /members/{uid} {
         allow read: if isMember(fid);
 
-        // Either the owner's own record while the family itself is being created,
-        // or a person joining with a valid invite.
-        allow create: if signedIn() && uid == request.auth.uid
+        allow create: if signedIn()
           && request.resource.data.uid == uid
+          && request.resource.data.keys().hasOnly(memberFields())
           && shortText(request.resource.data.displayName, 60)
           && (
-            (!exists(famPath(fid))
+            // The owner's own record, while the family itself is being created.
+            (uid == request.auth.uid
+              && !exists(famPath(fid))
               && getAfter(famPath(fid)).data.ownerUid == request.auth.uid
-              && request.resource.data.keys().hasOnly(['uid', 'role', 'displayName', 'email', 'joinedAt', 'personId'])
               && request.resource.data.role == 'owner')
             ||
-            (exists(famPath(fid))
+            // A person joining with a valid invite: waits for approval, and the head count goes up.
+            (uid == request.auth.uid
+              && exists(famPath(fid))
               && !exists(memberPath(fid, uid))
-              && request.resource.data.keys().hasOnly(['uid', 'role', 'displayName', 'email', 'joinedAt', 'personId', 'invite'])
-              && request.resource.data.personId == null
-              && joiningWithInvite(fid, uid))
+              && request.resource.data.role == 'pending'
+              && request.resource.data.get('personId', null) == null
+              && request.resource.data.invite is string
+              && get(invitePath(fid, request.resource.data.invite)).data.usedBy == null
+              && get(invitePath(fid, request.resource.data.invite)).data.expiresAt > request.time
+              && request.resource.data.requested == get(invitePath(fid, request.resource.data.invite)).data.role
+              && getAfter(invitePath(fid, request.resource.data.invite)).data.usedBy == uid
+              && getAfter(famPath(fid)).data.memberCount == count(get(famPath(fid)).data) + 1)
+            ||
+            // An administrator adds someone with a family username and password.
+            (uid != request.auth.uid
+              && isAdmin(fid)
+              && grantable(request.resource.data.role)
+              && request.resource.data.username is string
+              && validSettings(request.resource.data)
+              && getAfter(famPath(fid)).data.memberCount <= get(famPath(fid)).data.maxMembers)
           );
 
-        allow update, delete: if isOwner(fid);
+        allow update: if
+          // Administrators approve people and set what they see; the owner's record is the owner's own.
+          (isAdmin(fid)
+            && resource.data.role != 'owner'
+            && grantable(request.resource.data.role)
+            && request.resource.data.uid == resource.data.uid
+            && request.resource.data.keys().hasOnly(memberFields())
+            && shortText(request.resource.data.displayName, 60)
+            && validSettings(request.resource.data))
+          ||
+          // Anyone may change the name their family sees.
+          (uid == request.auth.uid && isMember(fid)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName'])
+            && shortText(request.resource.data.displayName, 60));
+
+        // Administrators remove people (never the owner); anyone but the owner may leave.
+        allow delete: if (isAdmin(fid) && resource.data.role != 'owner')
+          || (uid == request.auth.uid && isMember(fid) && resource.data.role != 'owner');
       }
 
       // Invite links. Anyone signed in who has the link may read that one invite
-      // (to see the family name); only the owner can list, create or cancel them.
+      // (to see the family name); administrators list, create and cancel them.
       match /invites/{token} {
         allow get: if signedIn();
-        allow list, delete: if isOwner(fid);
-        allow create: if isOwner(fid)
+        allow list, delete: if isAdmin(fid);
+        allow create: if isAdmin(fid)
           && request.resource.data.keys().hasOnly(['role', 'familyName', 'createdBy', 'createdAt', 'expiresAt', 'usedBy'])
-          && request.resource.data.role == 'parent'
+          && request.resource.data.role in ['parent', 'carer']
           && request.resource.data.createdBy == request.auth.uid
           && request.resource.data.usedBy == null
           && request.resource.data.expiresAt is timestamp
@@ -110,24 +176,43 @@ service cloud.firestore {
           && getAfter(memberPath(fid, request.auth.uid)).data.invite == token;
       }
 
-      // The family's data. Parents and the owner can add and change; a change is only
-      // accepted when it is at least as new as what is stored (so an old change that
-      // arrives late never overwrites a newer one). Nothing is ever hard-deleted here.
+      // The family's data. Each record says whose it is (owner: a child's id, or
+      // '_family' for school dates) and whether it is money. Reading follows the role;
+      // a change is only accepted when it is at least as new as what is stored.
       match /records/{rid} {
-        allow read: if isMember(fid);
-        allow create: if canWrite(fid) && validRecord(rid);
-        allow update: if canWrite(fid) && validRecord(rid)
-          && request.resource.data.updatedAt >= resource.data.updatedAt;
+        allow read: if isMember(fid) && mayRead(me(fid), resource.data);
+        allow create: if isMember(fid) && validRecord(rid) && mayWrite(me(fid), request.resource.data, true);
+        allow update: if isMember(fid) && validRecord(rid)
+          && request.resource.data.updatedAt >= resource.data.updatedAt
+          && request.resource.data.owner == resource.data.get('owner', request.resource.data.owner)
+          && mayWrite(me(fid), request.resource.data, false);
         allow delete: if false;
       }
     }
 
+    function mayRead(m, r) {
+      return m.role in ['owner', 'parent']
+        || (m.role == 'carer' && (r.owner == '_family' || (r.owner in m.get('kids', []) && r.money == false)))
+        || (m.role in ['child_view', 'child_limited'] && (
+              r.owner == '_family'
+              || (r.owner == m.personId && (r.money == false || m.get('money', true) == true))
+              || (m.get('siblings', false) == true && r.store in ['people', 'activities'])));
+    }
+    function mayWrite(m, r, creating) {
+      return m.role in ['owner', 'parent']
+        || (m.role == 'child_limited' && r.owner == m.personId
+              && ((creating && r.store == 'tasks') || (!creating && r.store in ['tasks', 'sessions', 'chores'])))
+        || (m.role == 'carer' && !creating && r.store == 'tasks' && r.owner in m.get('kids', []));
+    }
     function validRecord(rid) {
       let d = request.resource.data;
-      return d.keys().hasOnly(['store', 'id', 'updatedAt', 'by', 'deleted', 'json', 'syncAt'])
+      return d.keys().hasOnly(['store', 'id', 'owner', 'money', 'updatedAt', 'by', 'deleted', 'json', 'syncAt'])
         && knownStore(d.store)
         && d.id is string && d.id.size() > 0 && d.id.size() <= 80
         && rid == d.store + '~' + d.id
+        && d.owner is string && d.owner.size() > 0 && d.owner.size() <= 80
+        && d.money == moneyStore(d.store)
+        && (d.store in ['terms', 'daysoff']) == (d.owner == '_family')
         && d.updatedAt is string && d.updatedAt.size() <= 30
         && d.deleted is bool
         && d.json is string && d.json.size() <= 200000

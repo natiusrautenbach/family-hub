@@ -54,6 +54,8 @@
       keep.clear();
       location.reload();
     },
+    /* Checks again whether this person is still in the family and what they may see. */
+    recheck() { const u = cloud.user && cloud.user(); if (u && A.session) refresh(u); },
     async renameFamily(name) {
       const s = A.session;
       if (!s || s.role !== 'owner' || !name) return;
@@ -88,17 +90,47 @@
     try {
       const r = await withTimeout(cloud.myFamily(), 15000);
       if (!r) { st.name = u.name || ''; return show('family'); }
+      if (r.member.role === 'pending') { st.pendingFamily = r.family.name; startPendingCheck(); return show('pending'); }
       done(session(u, r), false);
     } catch (e) {
       st.error = cloud.message(e);
       show(offline(e) ? 'offline' : 'signin');
     }
   }
+  /* While waiting for approval, look again every 15 seconds. */
+  let pendT = null;
+  function startPendingCheck() {
+    clearInterval(pendT);
+    pendT = setInterval(async () => {
+      if (!A.blocking || st.screen !== 'pending') { clearInterval(pendT); return; }
+      if (st.busy) return;
+      try {
+        const u = st.user || cloud.user();
+        const r = await withTimeout(cloud.myFamily(), 15000);
+        if (r && r.member.role !== 'pending') { clearInterval(pendT); done(session(u, r), false); }
+        else if (!r) { clearInterval(pendT); st.error = 'Your request to join was declined or removed.'; show('family'); }
+      } catch (e) { /* offline: try again later */ }
+    }, 15000);
+  }
   async function refresh(u) {
     try {
       const r = await withTimeout(cloud.myFamily(), 20000);
-      if (r) { const s = session(u, r); keep.set(s); if (A.session) Object.assign(A.session, s); }
+      const before = A.session;
+      if (!r || r.member.role === 'pending') {
+        /* No longer in this family: remove its data from this device and start again. */
+        if (before) await forget(before.familyId);
+        return;
+      }
+      const s = session(u, r);
+      keep.set(s);
+      if (before && access(before) !== access(s)) { location.reload(); return; }
+      if (before) Object.assign(A.session, s);
     } catch (e) { /* offline: keep using what the device remembers */ }
+  }
+  async function forget(fid) {
+    keep.clear();
+    try { if (FH.data && FH.data.dropDatabase) await FH.data.dropDatabase('hc-' + fid); } catch (e) { /* removed next time */ }
+    location.reload();
   }
   /* Someone opened an invite link: check it, then ask them to confirm. */
   async function showJoin(u) {
@@ -120,7 +152,14 @@
     }
   }
 
-  const session = (u, r) => ({ uid: u.uid, email: u.email, name: r.member.name || u.name || u.email, provider: u.provider, familyId: r.family.id, familyName: r.family.name, familyCode: r.family.code, role: r.member.role, personId: r.member.personId });
+  const session = (u, r) => ({
+    uid: u.uid, email: u.email, name: r.member.name || u.name || u.email, provider: u.provider,
+    familyId: r.family.id, familyName: r.family.name, familyCode: r.family.code,
+    role: r.member.role, personId: r.member.personId || null, username: r.member.username || null,
+    kids: r.member.kids || [], siblings: !!r.member.siblings, money: r.member.money !== false,
+  });
+  /* What decides what this person sees; when it changes, the app restarts to match. */
+  const access = s => s ? JSON.stringify([s.familyId, s.role, s.personId, s.kids, s.siblings, s.money]) : '';
 
   function done(s, offlineStart) {
     st.pass = '';
@@ -172,6 +211,21 @@
     if (s === 'join-bad') return `<div class="solo">${hero('Invite link', '')}
       <section class="card stack">${err()}<div><button class="btn pri" data-gate="join-skip">Continue</button></div></section></div>`;
     const joining = pendingJoin() ? ' to join your family' : '';
+    if (s === 'pending') return `<div class="solo">${hero('Waiting for approval', `You've asked to join <b>${esc(st.pendingFamily || 'the family')}</b>. A parent in the family needs to approve you in Settings. This screen checks again by itself.`)}
+      <section class="card stack">${err()}
+        <div class="row"><button class="btn pri" data-gate="pending-check">Check again</button><button class="btn ghost sm" data-gate="signout">Sign out</button></div>
+      </section></div>`;
+    if (s === 'username') return `<div class="solo">${hero('Family sign-in', 'For people your family administrator set up with a username, such as children. Ask them for your family code.')}
+      <section class="card stack">
+        <form class="stack" data-gate-form="username" novalidate>
+          <label class="fld">Family code<input id="g-code" autocomplete="off" autocapitalize="characters" maxlength="6" value="${esc(st.code || '')}" placeholder="e.g. K7PQ2M" autofocus required></label>
+          <label class="fld">Username<input id="g-user" autocomplete="username" autocapitalize="none" value="${esc(st.username || '')}" required></label>
+          <label class="fld">Password<input id="g-pass" type="password" autocomplete="current-password" value="${esc(st.pass)}" required></label>
+          ${err()}
+          <button class="btn pri" type="submit" ${st.busy ? 'disabled' : ''}>${busy('Sign in')}</button>
+        </form>
+        <div><button type="button" class="btn ghost sm" data-gate="to-signin">Sign in with email instead</button></div>
+      </section></div>`;
     if (s === 'signin') return `<div class="solo">${hero('Sign in', joining ? 'Sign in, or create an account, to join your family.' : 'Sign in to see your family. New to Herding Cats? Create an account below.')}
       <section class="card stack">
         <form class="stack" data-gate-form="signin" novalidate>
@@ -184,6 +238,7 @@
         ${googleBtn()}
         <div class="row" style="justify-content:space-between">
           <button type="button" class="btn ghost sm" data-gate="to-reset">Forgot password?</button>
+          <button type="button" class="btn ghost sm" data-gate="to-username">Family username</button>
           <button type="button" class="btn ghost sm" data-gate="to-signup">Create an account</button>
         </div>
       </section></div>`;
@@ -241,6 +296,14 @@
     const f = ev.target.dataset && ev.target.dataset.gateForm;
     if (!f) return;
     ev.preventDefault();
+    if (f === 'username') {
+      const code = val('g-code').toUpperCase(), user = val('g-user').toLowerCase(), pass = $('#g-pass').value;
+      st.code = code; st.username = user; st.pass = pass;
+      if (!/^[A-Z0-9]{6}$/.test(code)) { st.error = 'The family code has 6 letters and numbers. Ask your family administrator for it.'; return show('username'); }
+      if (!user) { st.error = 'Enter your username.'; return show('username'); }
+      if (!pass) { st.error = 'Enter your password.'; return show('username'); }
+      run(async () => { const u = await cloud.signInUsername(code, user, pass); st.user = u; await findFamily(u); });
+    }
     if (f === 'signin') {
       const email = val('g-email'), pass = $('#g-pass').value;
       st.email = email; st.pass = pass;
@@ -270,6 +333,7 @@
       run(async () => {
         const r = await cloud.joinFamily(inv.fid, inv.token, name);
         clearJoin();
+        if (r.member.role === 'pending') { st.pendingFamily = r.family.name; st.screen = 'pending'; startPendingCheck(); return; }
         done(session(st.user || cloud.user(), r), false);
       });
     }
@@ -295,6 +359,8 @@
     if (a === 'to-signin') { st.email = val('g-email') || st.email; return show('signin'); }
     if (a === 'to-reset') { st.email = val('g-email') || st.email; return show('reset'); }
     if (a === 'retry') return start();
+    if (a === 'to-username') return show('username');
+    if (a === 'pending-check') return run(async () => { await findFamily(st.user || cloud.user()); });
     if (a === 'join-skip') { clearJoin(); st.invite = null; return st.user ? findFamily(st.user) : show('signin'); }
     if (a === 'signout') return run(async () => { await cloud.signOut(); keep.clear(); st.user = null; st.screen = 'signin'; });
     if (a === 'google') return run(async () => { const u = await cloud.google(); if (u) { st.user = u; await findFamily(u); } });
