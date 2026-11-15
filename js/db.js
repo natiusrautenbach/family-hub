@@ -124,8 +124,23 @@
   };
   const PARENT_ONLY = ['users'];
 
+  /* A second safety net on the device, matching the server's rules: what a carer or
+     child may see, record by record. */
+  const MONEY_STORES = ['accounts', 'entries', 'goals', 'ledger', 'chores', 'rewards'];
+  function inScope(user, store, rec) {
+    if (!rec || user.role === 'parent') return true;
+    if (store === 'terms' || store === 'daysoff') return true;
+    const owner = store === 'people' ? rec.id : rec.owner;
+    if (user.role === 'carer') return !MONEY_STORES.includes(store) && (user.kids || []).includes(owner);
+    if (user.role === 'child_view' || user.role === 'child_limited') {
+      if (owner === user.personId) return !MONEY_STORES.includes(store) || user.money !== false;
+      return !!user.siblings && (store === 'people' || store === 'activities');
+    }
+    return false;
+  }
   function can(user, action, store, rec) {
     if (!user) return false;
+    if (action === 'read' && rec && !inScope(user, store, rec)) return false;
     const rules = RULES[user.role];
     if (!rules) return false;
     if (user.role !== 'parent' && PARENT_ONLY.includes(store)) return false;
@@ -243,7 +258,7 @@
     async exportBackup() {
       if (!currentUser || currentUser.role !== 'parent') throw new AccessError('export', 'a backup');
       const stores = {};
-      for (const s of Object.keys(SCHEMA)) stores[s] = await raw.all(s);
+      for (const s of Object.keys(SCHEMA)) if (s !== 'outbox') stores[s] = (await raw.all(s)).filter(r => !(s === 'meta' && String(r.id).startsWith('local:'))); // device bookkeeping stays on the device
       return { app: 'family-hub', format: BACKUP_FORMAT, schema: DB_VERSION, exportedAt: now(), device: deviceId, stores };
     },
 
@@ -269,7 +284,7 @@
       data.checkBackup(obj);
       const stores = Object.keys(SCHEMA);
       const map = {};
-      for (const s of stores) map[s] = (obj.stores[s] || []).filter(r => !(s === 'meta' && r.id === 'deviceId'));
+      for (const s of stores) map[s] = s === 'outbox' ? [] : (obj.stores[s] || []).filter(r => !(s === 'meta' && (r.id === 'deviceId' || String(r.id).startsWith('local:'))));
       map.meta.push({ id: 'deviceId', value: deviceId, updatedAt: now() });
       map.meta.push({ id: 'restoredAt', value: now(), updatedAt: now() });
       await raw.clearAll(stores);
@@ -301,6 +316,7 @@
       const prev = await raw.get('users', member.id);
       const rec = Object.assign({}, prev || { createdAt: t, createdBy: 'system' }, {
         id: member.id, role: member.role, name: member.name, personId: member.personId || null,
+        kids: member.kids || [], siblings: !!member.siblings, money: member.money !== false,
         updatedAt: t, device: deviceId, deleted: false,
       });
       await raw.put('users', rec);

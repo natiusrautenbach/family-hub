@@ -157,7 +157,7 @@ await expectDenied('an older change cannot overwrite a newer one', () => setDoc(
 await expectDenied('school dates must belong to the family', () => setDoc(recRef(A, 'terms', 'term2'), rec('terms', 'term2', 'kidA', T)));
 await expectDenied('money flag must match the kind of record', () => setDoc(recRef(A, 'accounts', 'mX'), rec('accounts', 'mX', 'kidA', T, { money: false })));
 await expectDenied('unknown kinds of record are refused', () => setDoc(recRef(A, 'secrets', 's1'), rec('secrets', 's1', 'kidA', T)));
-await expectDenied('records are never hard-deleted', () => deleteDoc(recRef(A, 'tasks', 'tA')));
+await expectDenied('a parent cannot delete records', () => deleteDoc(recRef(C, 'tasks', 'tA')));
 await expectDenied('someone outside cannot read family data', () => getDoc(recRef(E, 'terms', 'term1')));
 
 // Removing people and the 8-person limit
@@ -174,6 +174,20 @@ await expectOk('owner sets the head count to the limit (test)', () => updateDoc(
 await expectOk('owner makes another invite', () => invite(A, 'tokenAAAAAAAAAAAAAAAAAA5'));
 await expectDenied('nobody can join a full family', () => joinBatch(E, 'tokenAAAAAAAAAAAAAAAAAA5'));
 await expectDenied('the head count cannot go past 8', () => updateDoc(doc(A.db, 'families', fa.fid), { memberCount: 9 }));
+
+// ---------- Deleting the family ----------
+await expectDenied('a parent cannot delete the family', () => deleteDoc(doc(C.db, 'families', fa.fid)));
+await expectDenied('the owner cannot delete their own record while the family exists', () => deleteDoc(doc(A.db, 'families', fa.fid, 'members', A.uid)));
+await expectOk('owner deletes all records, invites, people and the family', async () => {
+  const recs = await getDocs(collection(A.db, 'families', fa.fid, 'records'));
+  for (const d of recs.docs) await deleteDoc(d.ref);
+  for (const d of (await getDocs(collection(A.db, 'families', fa.fid, 'invites'))).docs) await deleteDoc(d.ref);
+  for (const d of (await getDocs(collection(A.db, 'families', fa.fid, 'members'))).docs) if (d.id !== A.uid) await deleteDoc(d.ref);
+  await deleteDoc(doc(A.db, 'families', fa.fid));
+  await deleteDoc(doc(A.db, 'families', fa.fid, 'members', A.uid));
+  await deleteDoc(doc(A.db, 'users', A.uid));
+});
+await expectDenied('the former parent can no longer read anything', () => getDoc(recRef(C, 'terms', 'term1')));
 
 console.log(failed ? `${failed} rule check(s) failed` : 'All rule checks passed');
 process.exit(failed ? 1 : 0);

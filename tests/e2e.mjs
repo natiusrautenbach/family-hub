@@ -145,6 +145,13 @@ try {
   await pw.waitForSelector('#g-family, #g-email', { timeout: 30000 }).catch(() => {});
   ok(await pw.locator('#g-family').count() === 1 && await pw.evaluate(async () => (await indexedDB.databases()).every(d => !d.name.startsWith('hc-'))), "removed person loses access and the family's data leaves her phone");
 
+  // ---------- Ava's home page ----------
+  await pk.reload(); await pk.waitForSelector('.shell', { timeout: 30000 }); await pk.waitForTimeout(500);
+  if (await pk.locator('[data-act=digest-close]').count()) await pk.click('[data-act=digest-close]');
+  await pk.click('[data-act=nav][data-v=today] >> visible=true');
+  ok((await pk.innerText('main')).includes('Hi Ava'), "Ava's home page greets her");
+  ok(await pk.evaluate(() => [...document.querySelectorAll('[data-act=child-edit],[data-act=task-edit],[data-act=add]')].every(e => getComputedStyle(e).display === 'none')), 'no editing buttons for a view-only child');
+
   const { pg: pc } = await newPage();
   await pc.goto(link); await pc.waitForSelector('#g-email', { timeout: 30000 });
   await pc.click('[data-gate=to-signup]'); await pc.fill('#g-name', 'Stranger'); await pc.fill('#g-email', 'stranger@example.com'); await pc.fill('#g-pass', 'password123');
@@ -161,6 +168,19 @@ try {
   await pg2.click('[data-gate=to-reset]'); await pg2.fill('#g-email', 'sam@example.com'); await submit(pg2, 'reset');
   await pg2.waitForSelector('#gate-note', { timeout: 15000 });
   ok((await pg2.innerText('#gate-note')).includes('reset link'), 'password reset email requested');
+  // ---------- The owner deletes the family ----------
+  if (await pg.locator('.panel').count()) await pg.keyboard.press('Escape');
+  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await pg.click('[data-act=del-fam]'); await pg.fill('#f-confirm', 'The Rautenbachs'); await pg.click('[data-form=delfam] button[type=submit]');
+  await pg.waitForSelector('#g-email', { timeout: 60000 });
+  ok(await pg.locator('.shell').count() === 0, 'owner deletes the family and is signed out');
+  await pk.reload(); await pk.waitForSelector('#g-email, #g-family', { timeout: 30000 }).catch(() => {});
+  ok(await pk.locator('.shell').count() === 0, "Ava's phone loses access after the family is deleted");
+  const { pg: pz } = await newPage();
+  await pz.goto(URL); await pz.waitForSelector('#g-email', { timeout: 30000 });
+  await pz.click('[data-gate=to-username]'); await pz.fill('#g-code', code); await pz.fill('#g-user', 'ava'); await pz.fill('#g-pass', 'kitty1234'); await submit(pz, 'username');
+  await pz.waitForFunction(() => document.querySelector('#gate-err')?.textContent.trim(), null, { timeout: 15000 }).catch(() => {});
+  ok((await pz.innerText('#gate-err')).includes("don't match"), "Ava's username is gone too");
 } catch (e) {
   failed++; console.log('FAIL app: test stopped early —', e.message);
 }

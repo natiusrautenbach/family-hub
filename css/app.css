@@ -482,3 +482,4 @@ form.stack .btn.pri{justify-self:start}
 .set .meta{font-size:12px}
 .form label.check{display:flex;flex-direction:row;align-items:flex-start;gap:10px;font-weight:500;color:var(--ink)}
 .form label.check input{width:20px;height:20px;flex:none;margin:1px 0 0;padding:0}
+.card.dangerc{border-color:color-mix(in srgb,var(--bad) 35%,var(--line))}

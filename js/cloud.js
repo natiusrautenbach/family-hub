@@ -270,6 +270,36 @@
         await b.commit();
         return uid;
       },
+      /* Deletes everything stored about the family: data, invites, usernames, people,
+         then the family itself and the owner's own record. Reports progress. */
+      async deleteFamily(fid, code, onStep) {
+        const u = auth.currentUser;
+        const step = t => { try { onStep && onStep(t); } catch (e) { /* screen gone */ } };
+        const inBatches = async refs => {
+          for (let i = 0; i < refs.length; i += 400) {
+            const b = F.writeBatch(db);
+            refs.slice(i, i + 400).forEach(r => b.delete(r));
+            await b.commit();
+          }
+        };
+        step('Deleting the family\'s calendar, tasks, study plans and money…');
+        await inBatches((await F.getDocs(F.collection(db, 'families', fid, 'records'))).docs.map(d => d.ref));
+        step('Deleting invite links and usernames…');
+        await inBatches((await F.getDocs(F.collection(db, 'families', fid, 'invites'))).docs.map(d => d.ref));
+        const ms = (await F.getDocs(F.collection(db, 'families', fid, 'members'))).docs;
+        await inBatches(ms.filter(d => d.data().username).map(d => F.doc(db, 'logins', loginKey(code, d.data().username))));
+        step('Removing everyone from the family…');
+        await inBatches(ms.filter(d => d.id !== u.uid).map(d => d.ref));
+        await F.deleteDoc(F.doc(db, 'families', fid));
+        await F.deleteDoc(F.doc(db, 'families', fid, 'members', u.uid));
+        await F.deleteDoc(F.doc(db, 'users', u.uid)).catch(() => {});
+      },
+      /* Leaves the family (anyone but the owner). */
+      async leaveFamily(fid) {
+        const u = auth.currentUser;
+        await F.deleteDoc(F.doc(db, 'families', fid, 'members', u.uid));
+        await F.deleteDoc(F.doc(db, 'users', u.uid)).catch(() => {});
+      },
       async signInUsername(code, username, password) {
         const d = await F.getDoc(F.doc(db, 'logins', loginKey(code, username)));
         if (!d.exists()) throw fail('username-unknown');
@@ -422,6 +452,14 @@
         if (o.replacing) delete D.members[fid][o.replacing]; else D.families[fid].memberCount = (D.families[fid].memberCount || 1) + 1;
         save(); return uid;
       },
+      async deleteFamily(fid, code, onStep) {
+        onStep && onStep('Deleting…'); await wait();
+        for (const [uid, m] of Object.entries(D.members[fid] || {})) { if (m.username) delete (D.logins || {})[loginKey(code, m.username)]; if (D.users[uid] && D.users[uid].familyId === fid) delete D.users[uid]; }
+        delete D.members[fid]; delete D.families[fid]; if (D.records) delete D.records[fid];
+        for (const [k, v] of Object.entries(D.invites || {})) if (v.fid === fid) delete D.invites[k];
+        save();
+      },
+      async leaveFamily(fid) { await wait(); delete (D.members[fid] || {})[D.session]; delete D.users[D.session]; save(); },
       async signInUsername(code, username, password) {
         await wait();
         const l = (D.logins || {})[loginKey(code, username)];

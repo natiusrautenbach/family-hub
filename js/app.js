@@ -8,14 +8,41 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '2.3.0';
+  const VERSION = '2.4.0';
   const MILESTONE = 7;
-  const PHASE2 = '2.3'; // Phase 2 milestone in this build
+  const PHASE2 = '2.4'; // Phase 2 milestone in this build
   /* Who is using the app decides what it offers (the server decides what they receive). */
   const isAdmin = () => !S.session || ['owner', 'parent'].includes(S.session.role);
   const isChild = () => !!S.session && ['child_view', 'child_limited'].includes(S.session.role);
   const seesMoney = () => isAdmin() || (isChild() && S.session.money !== false);
   const canAdd = () => isAdmin() || (S.session && S.session.role === 'child_limited');
+  /* What children and carers may tap. Everything else is for parents (and is hidden). */
+  const VIEW_ACTS = ['nav', 'open-child', 'only-child', 'close', 'close-bg', 'retry', 'calmode', 'calnext', 'calprev', 'caltoday', 'selday', 'vis', 'kind', 'tfilter',
+    'digest-open', 'digest-close', 'ev', 'task-open', 'study-period', 'study-tab', 'money-child', 'chore-view', 'chore-prev', 'chore-next', 'hist-all', 'led-hist',
+    'past-terms', 'install', 'persist', 'acct-signout', 'leave-family', 'leave-confirm'];
+  const ROLE_ACTS = {
+    carer: ['task-done', 'step-done'],
+    child_view: [],
+    child_limited: ['add', 'add-type', 'task-done', 'step-done', 'task-edit', 'step-add', 'step-rm', 'sess-done', 'chore-occ', 'chore-mark'],
+  };
+  const ALL_ACTS = ['acc-add', 'acc-edit', 'act-edit', 'add', 'add-type', 'bal-cancel', 'bal-edit', 'check-text', 'child-add', 'child-del', 'child-edit', 'chore-add', 'chore-approve', 'chore-edit',
+    'chore-mark', 'chore-occ', 'day-add', 'day-edit', 'day-toggle', 'do-restore', 'entry-add', 'entry-edit', 'ev-edit', 'ev-skip', 'exam-add', 'exam-edit', 'export-copy', 'export-file',
+    'go-restore', 'goal-add', 'goal-down', 'goal-edit', 'goal-reach', 'goal-reopen', 'goal-up', 'imp-start', 'led-add', 'led-edit', 'led-settle', 'period-add', 'period-edit', 'plan-build',
+    'plan-rebuild', 'rec-del', 'reward-add', 'reward-approve', 'reward-edit', 'reward-minus', 'reward-plus', 'sess-add', 'sess-done', 'sess-edit', 'step-add', 'step-done', 'step-rm',
+    'task-done', 'task-edit', 'term-add', 'term-edit', 'terms-reset', 'use-official'];
+  const mayTap = a => isAdmin() || VIEW_ACTS.includes(a) || (ROLE_ACTS[S.session.role] || []).includes(a);
+  /* Hides the buttons this person can't use, so they never meet a refusal. */
+  function roleStyle() {
+    let el = document.getElementById('role-style');
+    if (!el) { el = document.createElement('style'); el.id = 'role-style'; document.head.appendChild(el); }
+    if (isAdmin()) { el.textContent = ''; return; }
+    const blocked = ALL_ACTS.filter(a => !mayTap(a));
+    /* Buttons disappear; rows and tick boxes stay visible (so the information shows) but can't be tapped. */
+    const hide = blocked.flatMap(a => [`.btn[data-act="${a}"]`, `.iconbtn[data-act="${a}"]`]);
+    if (mayTap('add')) hide.push('.btn[data-act="add"]:not([data-v="task"])');
+    const inert = blocked.map(a => `[data-act="${a}"]:not(.btn):not(.iconbtn)`);
+    el.textContent = `${hide.join(',')}{display:none!important}${inert.join(',')}{pointer-events:none!important;cursor:default!important}`;
+  }
 
   /* ---------- Small helpers ---------- */
   const $ = s => document.querySelector(s);
@@ -401,6 +428,51 @@
     S.sheet = null; S.newLogin = { name, username }; await loadPeople(); render();
     $('#new-login')?.scrollIntoView({ block: 'center' });
   }
+  /* ---------- Deleting or leaving the family ---------- */
+  function familyEndCard() {
+    const s = S.session;
+    if (!s || !FH.cloud.deleteFamily) return '';
+    if (s.role === 'owner') return `<section class="card dangerc" id="delete-family"><div class="card-h"><h3>Delete our family</h3></div>
+      <p class="small">Deletes everything Herding Cats stores about your family on its servers: the calendar, tasks, study plans, money, invites, usernames and the list of people. Everyone loses access, and the data is removed from their devices next time they open the app. This can't be undone; download a backup first if you want a copy.</p>
+      <div class="row" style="margin-top:10px"><button class="btn del" data-act="del-fam">Delete our family…</button></div></section>`;
+    if (s.username) return '';
+    return `<section class="card"><div class="card-h"><h3>Leave this family</h3></div>
+      <p class="small">You stop seeing ${esc(S.family || s.familyName)}, and its data is removed from this device. A parent can invite you again later.</p>
+      <div class="row" style="margin-top:10px"><button class="btn del" data-act="leave-family">Leave this family…</button></div></section>`;
+  }
+  function delFamSheet() {
+    const sh = S.sheet, name = S.family || S.session.familyName;
+    return `<div class="scrim" data-act="close-bg"><div class="panel" role="dialog" aria-modal="true" aria-labelledby="sh-h">
+      <h2 id="sh-h">${sh.kind === 'leave' ? 'Leave this family?' : 'Delete our family?'}</h2>
+      ${sh.kind === 'leave' ? `<p class="small" style="margin-top:8px">You'll no longer see ${esc(name)}, and its data is removed from this device.</p>`
+        : `<p class="small" style="margin-top:8px">Everything about <b>${esc(name)}</b> is deleted from Herding Cats' servers, for everyone. This can't be undone.</p>
+      <form class="form" data-form="delfam" style="margin-top:14px">
+        <label class="full">Type the family name to confirm<input id="f-confirm" autocomplete="off" placeholder="${esc(name)}" ${sh.busy ? 'disabled' : ''}></label>`}
+        ${sh.step ? `<p class="small full" role="status">${esc(sh.step)}</p>` : ''}
+        <div class="err full" id="f-err" role="alert">${esc(sh.error || '')}</div>
+        <div class="actions full"><button type="button" class="btn" data-act="close" ${sh.busy ? 'disabled' : ''}>Cancel</button>
+          ${sh.kind === 'leave' ? `<button type="button" class="btn del armed" data-act="leave-confirm" ${sh.busy ? 'disabled' : ''}>Leave</button>` : `<button class="btn del armed" type="submit" ${sh.busy ? 'disabled' : ''}>${sh.busy ? 'Deleting…' : 'Delete everything'}</button>`}</div>
+      ${sh.kind === 'leave' ? '' : '</form>'}
+    </div></div>`;
+  }
+  async function deleteFamily() {
+    const sh = S.sheet, s = S.session, name = (S.family || s.familyName).trim();
+    if ($('#f-confirm').value.trim().toLowerCase() !== name.toLowerCase()) { sh.error = `Type ${name} exactly to confirm.`; renderSheet(); return; }
+    sh.busy = true; sh.error = ''; renderSheet();
+    try {
+      await FH.cloud.deleteFamily(s.familyId, s.familyCode, t => { sh.step = t; renderSheet(); });
+    } catch (e) { sh.busy = false; sh.step = ''; sh.error = `Not everything was deleted: ${FH.cloud.message(e)} Try again.`; renderSheet(); return; }
+    sh.step = 'Done. Removing it from this device…'; renderSheet();
+    await FH.account.forgetFamily(s.familyId, true);
+  }
+  async function leaveFamily() {
+    const sh = S.sheet, s = S.session;
+    sh.busy = true; renderSheet();
+    try { await FH.cloud.leaveFamily(s.familyId); }
+    catch (e) { sh.busy = false; sh.error = FH.cloud.message(e); renderSheet(); return; }
+    await FH.account.forgetFamily(s.familyId, false);
+  }
+
   async function removeMember(uid, declining) {
     const s = S.session, m = (S.members || []).find(x => x.uid === uid);
     if (!m) return;
@@ -502,12 +574,16 @@
     </section></div>`;
   }
 
-  function vChild(id) {
+  function vChild(id, home) {
     const c = S.children.find(x => x.id === id);
-    if (!c) return `<div class="view"><section class="card"><p class="empty">This child was removed.</p><button class="btn" data-act="nav" data-v="today">Back to Today</button></section></div>`;
+    if (!c) return `<div class="view"><section class="card"><p class="empty">${home ? 'Your page isn\'t ready yet. Ask a parent to check your username settings.' : 'This child was removed.'}</p>${home ? '' : '<button class="btn" data-act="nav" data-v="today">Back to Today</button>'}</section></div>`;
+    const open = S.tasks.filter(t => t.owner === c.id && !t.done);
+    const soon = open.filter(t => t.due && C.diffDays(C.today(), t.due) <= 2).length;
     return `<div class="view">
-      <div class="phead">${avatar(c, true)}<div class="min0" style="flex:1"><h1>${esc(c.name)}</h1><div class="muted">${esc(c.grade || '')} · ${colName(c.colour)}</div></div>
-        <button class="btn" data-act="child-edit" data-v="${c.id}">Edit</button></div>
+      ${home ? `<section class="hero"><div class="eyebrow">${esc(S.family || '')}${S.family ? ' · ' : ''}${schoolLine(C.today()) || 'Today'}</div><h1>Hi ${esc(c.name)}</h1>
+          <p class="digest">${C.fmtLong(C.today())}.${open.length ? ` You have <b>${open.length} open task${open.length === 1 ? '' : 's'}</b>${soon ? `, ${soon} due in the next two days` : ''}.` : ' No open homework. Nice!'}</p></section>`
+        : `<div class="phead">${avatar(c, true)}<div class="min0" style="flex:1"><h1>${esc(c.name)}</h1><div class="muted">${esc(c.grade || '')} · ${colName(c.colour)}</div></div>
+        <button class="btn" data-act="child-edit" data-v="${c.id}">Edit</button></div>`}
       <section class="card" style="margin-bottom:14px"><div class="card-h"><h3>Today · ${C.fmtDay(C.today())}</h3><button class="btn sm" data-act="only-child" data-v="${c.id}">Week view</button></div>
         ${(() => { const ev = C.eventsOn(C.today(), src(), { visible: new Set([c.id]) }); return ev.length ? ev.map(e => evRow(e)).join('') : emptyCat('Nothing planned today.'); })()}</section>
       <div class="cols">
@@ -518,10 +594,10 @@
         <section class="card"><div class="card-h"><h3>Homework and projects</h3><button class="btn sm" data-act="add" data-v="task" data-child="${c.id}">Add</button></div>
           ${taskRows(S.tasks.filter(t => t.owner === c.id && !t.done).sort(byDue), true) || emptyCat('No open homework or projects.')}</section>
         <section class="card"><div class="card-h"><h3>Upcoming exams</h3><button class="btn sm" data-act="nav" data-v="study">Study planner</button></div>${studyProgress(c.id)}${examRows(S.exams.filter(x => x.owner === c.id && x.date >= C.today()).sort(byDate).slice(0, 8), true) || '<p class="empty">No exams coming up.</p>'}</section>
-        ${childMoneyCard(c.id)}
+        ${moneyShownFor(c.id) ? `${childMoneyCard(c.id)}
         <section class="card"><div class="card-h"><h3>Chores and reward goals</h3><button class="btn sm" data-act="money-child" data-v="${c.id}">Open</button></div>
           ${S.chores.filter(x => x.owner === c.id).map(x => choreCard(x, true)).join('')}${S.rewards.filter(x => x.owner === c.id).map(rewardCard).join('')}
-          ${!S.chores.some(x => x.owner === c.id) && !S.rewards.some(x => x.owner === c.id) ? '<p class="empty">No chores or reward goals yet.</p>' : ''}</section>
+          ${!S.chores.some(x => x.owner === c.id) && !S.rewards.some(x => x.owner === c.id) ? '<p class="empty">No chores or reward goals yet.</p>' : ''}</section>` : ''}
       </div></div>`;
   }
 
@@ -957,12 +1033,16 @@
   }
   const netText = (id, m) => `${esc(nameOf(id))}'s total: <b class="${m.net < 0 ? 'neg' : ''}">${M.fmt(m.net)}</b>`;
 
+  /* Money labels read from the reader's side: a parent sees "Owes you", a child "You owe your parents". */
+  const L_OWES = () => isChild() ? 'You owe your parents' : 'Owes you';
+  const L_OWE = () => isChild() ? 'Your parents owe you' : 'You owe';
+  const moneyShownFor = id => isAdmin() || (isChild() && S.session.money !== false && id === S.session.personId);
   function childMoneyCard(id) {
     const m = moneyOf(id);
     return `<section class="card"><div class="card-h"><h3>Money</h3><button class="btn sm" data-act="money-child" data-v="${id}">Open</button></div>
       <div class="line"><span>Savings</span><span class="amt">${M.fmt(m.savings)}</span></div>
-      <div class="line"><span>Owes you</span><span class="amt">${M.fmt(m.owes)}</span></div>
-      <div class="line"><span>You owe</span><span class="amt">${M.fmt(m.owe)}</span></div>
+      <div class="line"><span>${L_OWES()}</span><span class="amt">${M.fmt(m.owes)}</span></div>
+      <div class="line"><span>${L_OWE()}</span><span class="amt">${M.fmt(m.owe)}</span></div>
       <p class="meta" style="margin-top:8px">${netText(id, m)}</p></section>`;
   }
 
@@ -975,15 +1055,15 @@
     const settled = S.ledger.filter(l => l.owner === id && M.leftOf(l) === 0).sort((a, b) => (b.settledAt || b.date).localeCompare(a.settledAt || a.date));
     return `<div class="view">
       <section class="card" style="margin-bottom:14px"><div class="card-h"><h3>All children</h3></div>
-        <div class="tbl"><table class="ov"><thead><tr><th>Child</th><th>Savings</th><th>Owes you</th><th>You owe</th><th>Net</th></tr></thead><tbody>
+        <div class="tbl"><table class="ov"><thead><tr><th>Child</th><th>Savings</th><th>${isChild() ? 'You owe' : 'Owes you'}</th><th>${isChild() ? 'Owed to you' : 'You owe'}</th><th>Net</th></tr></thead><tbody>
         ${S.children.map(c => { const x = moneyOf(c.id); return `<tr class="${c.id === id ? 'sel' : ''}"><td><button data-act="money-child" data-v="${c.id}">${avatar(c)}${esc(c.name)}</button></td><td>${M.fmt(x.savings)}</td><td>${M.fmt(x.owes)}</td><td>${M.fmt(x.owe)}</td><td class="${x.net < 0 ? 'neg' : ''}" style="font-weight:700">${M.fmt(x.net)}</td></tr>`; }).join('')}
         </tbody></table></div>
-        <p class="meta" style="margin-top:8px">Net is each child's total: savings, plus what you owe them, minus what they owe you.</p></section>
+        <p class="meta" style="margin-top:8px">${isChild() ? 'Net is your total: savings, plus what your parents owe you, minus what you owe them.' : 'Net is each child\'s total: savings, plus what you owe them, minus what they owe you.'}</p></section>
       <div class="row" style="margin-bottom:12px">${avatar(kid, true)}<div><div class="big">${esc(kid.name)}</div><div class="muted">${netText(id, m)}</div></div></div>
       <div class="split">
         <div class="stat"><div class="k">Savings</div><div class="v">${M.fmt(m.savings)}</div></div>
-        <div class="stat"><div class="k">Owes you</div><div class="v">${M.fmt(m.owes)}</div></div>
-        <div class="stat"><div class="k">You owe</div><div class="v">${M.fmt(m.owe)}</div></div>
+        <div class="stat"><div class="k">${L_OWES()}</div><div class="v">${M.fmt(m.owes)}</div></div>
+        <div class="stat"><div class="k">${L_OWE()}</div><div class="v">${M.fmt(m.owe)}</div></div>
       </div>
       <div class="mgrid">
         <div class="stack">
@@ -992,7 +1072,7 @@
         </div>
         <section class="card"><div class="card-h"><h3>Money owed</h3><button class="btn sm" data-act="led-add">Add</button></div>
           ${open.map(l => { const left = M.leftOf(l), paid = M.paidOf(l); return `<div class="line">
-            <button class="min0 slink" data-act="led-edit" data-v="${l.id}"><span class="lti">${esc(l.note)}</span><span class="sb">${C.fmtDay(l.date)} · ${l.dir === 'owes' ? `${esc(kid.name)} owes you` : `You owe ${esc(kid.name)}`}${paid ? ` · ${M.fmt(paid)} of ${M.fmt(l.amount)} paid` : ''}</span></button>
+            <button class="min0 slink" data-act="led-edit" data-v="${l.id}"><span class="lti">${esc(l.note)}</span><span class="sb">${C.fmtDay(l.date)} · ${l.dir === 'owes' ? (isChild() ? 'You owe your parents' : `${esc(kid.name)} owes you`) : (isChild() ? 'Your parents owe you' : `You owe ${esc(kid.name)}`)}${paid ? ` · ${M.fmt(paid)} of ${M.fmt(l.amount)} paid` : ''}</span></button>
             <span class="row" style="gap:8px;flex-wrap:nowrap"><span class="amt ${l.dir === 'owes' ? 'pos' : 'neg'}">${M.fmt(left)}</span><button class="btn sm" data-act="led-settle" data-v="${l.id}">Settle</button></span></div>`; }).join('') || '<p class="empty">Nothing owed either way.</p>'}
           ${settled.length ? `<details class="pastsess" ${S.ledgerHist ? 'open' : ''}><summary data-act="led-hist">Settled (${settled.length})</summary>${settled.map(l => `<div class="line"><button class="min0 slink struck" data-act="led-edit" data-v="${l.id}"><span class="lti">${esc(l.note)}</span><span class="sb">${C.fmtDay(l.date)}${l.settledAt ? ` · settled ${C.fmtDay(l.settledAt)}` : ''}</span></button><span class="amt muted">${M.fmt(l.amount)}</span></div>`).join('')}</details>` : ''}
         </section>
@@ -1573,7 +1653,7 @@
   }
 
   function vSettings() {
-    if (!isAdmin()) return `<div class="view"><div class="stack">${signInCard()}${helpCard()}
+    if (!isAdmin()) return `<div class="view"><div class="stack">${signInCard()}${familyEndCard()}${helpCard()}
       <section class="card"><div class="card-h"><h3>About</h3></div><p class="meta">Herding Cats beta ${VERSION} · Phase 2, milestone ${PHASE2}</p><p class="meta" style="margin-top:4px">© 2026 Natius. All rights reserved.</p></section></div></div>`;
     const st = S.storage;
     const installed = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -1617,6 +1697,7 @@
       </section>
 
       ${signInCard()}
+      ${familyEndCard()}
 
       ${helpCard()}
 
@@ -1807,15 +1888,16 @@
   function render() {
     if (FH.account && FH.account.blocking) return; // the sign-in screens are showing
     const app = $('#app');
-    if (S.error) { app.innerHTML = vError(); renderSheet(); return; }
+    if (S.error) { app.innerHTML = vError(); renderSheet(true); return; }
     if (!S.ready) { app.innerHTML = `<div class="solo"><p class="muted center" style="padding-top:40px">${S.syncWait ? 'Fetching your family\'s calendar…' : 'Opening Herding Cats…'}</p></div>`; return; }
     if (!S.children.length && !S.setupDone && isAdmin()) {
       if (!S.setup) S.setup = { family: S.family || '', rows: [{ name: '', grade: 'Grade 1', colour: 'c1' }] };
-      app.innerHTML = vSetup(); renderSheet(); return;
+      app.innerHTML = vSetup(); renderSheet(true); return;
     }
     const v = S.view;
     if (v === 'money' && !seesMoney()) S.view = 'today';
-    const content = S.view === 'today' ? vToday() : v === 'calendar' ? vCalendar() : v === 'tasks' ? vTasks() : v === 'study' ? vStudy() : v === 'money' ? vMoney() : v === 'settings' ? vSettings() : v === 'child' ? vChild(S.child) : COMING[v] ? vComing(v) : vToday();
+    roleStyle();
+    const content = S.view === 'today' && isChild() && S.session.personId ? vChild(S.session.personId, true) : S.view === 'today' ? vToday() : v === 'calendar' ? vCalendar() : v === 'tasks' ? vTasks() : v === 'study' ? vStudy() : v === 'money' ? vMoney() : v === 'settings' ? vSettings() : v === 'child' ? vChild(S.child) : COMING[v] ? vComing(v) : vToday();
     const fab = ['today', 'calendar', 'child', 'tasks'].includes(v) && S.children.length && canAdd();
     const title = v === 'child' ? (S.children.find(c => c.id === S.child)?.name || 'Child') : TITLES[v] || 'Herding Cats';
     const cur = k => (v === k ? 'aria-current="page"' : '');
@@ -1836,10 +1918,15 @@
       <nav class="tabbar" aria-label="Main">${navList().map(([k, l]) => `<button data-act="nav" data-v="${k}" ${cur(k)}>${ic(k)}${l}</button>`).join('')}</nav>
       ${fab ? `<button class="fab" data-act="add" data-v="${v === 'tasks' || !isAdmin() ? 'task' : S.lastAdd || 'activity'}"${v === 'child' ? ` data-child="${S.child}"` : ''}>${ic('plus')}Add</button>` : ''}
     </div>${restoreInput()}`;
-    renderSheet();
+    renderSheet(true);
   }
-  function renderSheet() {
+  let drawnSheet = null;
+  /* soft: called by a whole-screen redraw; leaves an already-open form exactly as it is,
+     so a late redraw never wipes what someone is typing. */
+  function renderSheet(soft) {
     const el = $('#sheet');
+    if (soft && S.sheet && S.sheet === drawnSheet && el.innerHTML) return;
+    drawnSheet = S.sheet;
     if (!S.sheet) {
       el.hidden = true; el.innerHTML = '';
       if (S.dirty) { S.dirty = false; render(); } // changes from the family arrived while a form was open
@@ -1849,7 +1936,7 @@
     el.innerHTML = k === 'child' ? childSheet() : k === 'restore' ? restoreSheet() : k === 'activity' ? activitySheet()
       : k === 'reminder' ? reminderSheet() : k === 'event' ? eventSheet() : k === 'task' ? taskSheet() : k === 'taskview' ? taskViewSheet()
       : k === 'period' ? periodSheet() : k === 'exam' ? examSheet() : k === 'session' ? sessionSheet()
-      : k === 'member' ? memberSheet() : k === 'login' ? loginSheet()
+      : k === 'member' ? memberSheet() : k === 'login' ? loginSheet() : k === 'delfam' || k === 'leave' ? delFamSheet()
       : k === 'account' ? accountSheet() : k === 'entry' ? entrySheet() : k === 'goal' ? goalSheet() : k === 'ledger' ? ledgerSheet() : k === 'settle' ? settleSheet() : k === 'reach' ? reachSheet() : k === 'chore' ? choreSheet() : k === 'digest' ? digestSheet() : k === 'reward' ? rewardSheet() : k === 'term' ? termSheet() : dayoffSheet();
     const who = changedBy();
     if (who) { const p = el.querySelector('.panel'); if (p) p.insertAdjacentHTML('beforeend', `<p class="meta changed">${who}</p>`); }
@@ -2070,8 +2157,10 @@
   document.addEventListener('click', async ev => {
     const b = ev.target.closest('[data-act]');
     if (!b) return;
-    const a = b.dataset.act, v = b.dataset.v;
+    let a = b.dataset.act, v = b.dataset.v;
     if (a === 'close-bg') { if (ev.target === b) { S.sheet = null; renderSheet(); } return; }
+    if (S.session && !a.startsWith('inv-') && !a.startsWith('mem-') && !a.startsWith('login-') && !a.startsWith('del-fam') && !mayTap(a)) { toast('Only a parent can change this.'); return; }
+    if (a === 'add' && !isAdmin()) v = 'task'; // children add homework only
     try {
       switch (a) {
         case 'retry': location.reload(); return;
@@ -2105,6 +2194,9 @@
         case 'su-finish': readSetupInputs(); await finishSetup(); return;
         case 'acct-signout': FH.account.signOut(); return;
         case 'inv-new': await newInvite(); return;
+        case 'del-fam': S.sheet = { kind: 'delfam' }; renderSheet(); setTimeout(() => $('#f-confirm')?.focus(), 30); return;
+        case 'leave-family': S.sheet = { kind: 'leave' }; renderSheet(); return;
+        case 'leave-confirm': await leaveFamily(); return;
         case 'login-add': S.newInvite = null; S.newLogin = null; S.sheet = { kind: 'login', who: S.children.length ? 'child' : 'other', personId: S.children[0]?.id }; renderSheet(); return;
         case 'login-who': readPeopleForm(); S.sheet.who = v; S.sheet.username = undefined; S.sheet.role = undefined; renderSheet(); return;
         case 'mem-edit': case 'mem-approve': S.sheet = { kind: 'member', uid: v }; renderSheet(); return;
@@ -2360,6 +2452,7 @@
       if (f === 'child') await saveChild();
       if (f === 'member') await saveMember();
       if (f === 'login') await saveLogin();
+      if (f === 'delfam') await deleteFamily();
       if (f === 'task') await saveTask();
       if (f === 'period') await savePeriod();
       if (f === 'account') await saveAccount();
@@ -2427,8 +2520,11 @@
       if (FH.account) {
         const s = await FH.account.gate();
         S.session = s;
-        data.useDatabase('hc-' + s.familyId);
-        await data.ready({ id: s.uid, role: ['owner', 'parent'].includes(s.role) ? 'parent' : s.role, name: s.name, personId: s.personId });
+        /* Parents share one copy of the family on a device; anyone with a limited view gets
+           their own, so a child signing in on a parent's tablet never sees the parent's copy. */
+        const full = ['owner', 'parent'].includes(s.role);
+        data.useDatabase(full ? 'hc-' + s.familyId : `hc-${s.familyId}-${s.uid}`);
+        await data.ready({ id: s.uid, role: full ? 'parent' : s.role, name: s.name, personId: s.personId, kids: s.kids || [], siblings: !!s.siblings, money: s.money !== false });
         if (FH.sync && FH.sync.available) {
           const first = FH.sync.start(s);
           /* A device new to this family waits briefly for the family's data before opening. */

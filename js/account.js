@@ -34,7 +34,7 @@
 
   /* Privacy notice shown when creating a family, and in Settings. */
   const PRIVACY = `<p class="small">Herding Cats keeps your family's information on Google Firebase servers in Johannesburg, so the people you invite can see it on their own devices. It is used only to run the app: it is never sold, shared with anyone outside your family, or used for advertising.</p>
-    <p class="small" style="margin-top:8px">As the family administrator you decide who joins and what each person sees. You can have your family and everything stored about it deleted at any time; a Delete button arrives in Settings in a coming update. For questions about your information, contact Natius, who runs Herding Cats.</p>`;
+    <p class="small" style="margin-top:8px">As the family administrator you decide who joins and what each person sees. You can delete your family and everything stored about it at any time, under Settings › Delete our family. For questions about your information, contact Natius, who runs Herding Cats.</p>`;
 
   const st = { screen: 'loading', busy: false, error: '', note: '', email: '', name: '', family: '', pass: '', consent: false, resolve: null, user: null };
   const A = {
@@ -53,6 +53,11 @@
       try { await cloud.signOut(); } catch (e) { /* signed out on this device anyway */ }
       keep.clear();
       location.reload();
+    },
+    /* After deleting or leaving the family: clear it from this device and start again. */
+    async forgetFamily(fid, signOut) {
+      if (signOut) { try { await cloud.signOut(); } catch (e) { /* signed out locally anyway */ } }
+      await forget(fid);
     },
     /* Checks again whether this person is still in the family and what they may see. */
     recheck() { const u = cloud.user && cloud.user(); if (u && A.session) refresh(u); },
@@ -129,7 +134,15 @@
   }
   async function forget(fid) {
     keep.clear();
-    try { if (FH.data && FH.data.dropDatabase) await FH.data.dropDatabase('hc-' + fid); } catch (e) { /* removed next time */ }
+    try {
+      if (FH.data && FH.data.dropDatabase) {
+        /* Every copy of this family on the device: the parents' copy and any child's or carer's. */
+        const names = new Set(['hc-' + fid]);
+        if (A.session && A.session.uid) names.add(`hc-${fid}-${A.session.uid}`);
+        try { for (const d of await indexedDB.databases()) if (d.name && (d.name === 'hc-' + fid || d.name.startsWith(`hc-${fid}-`))) names.add(d.name); } catch (e) { /* listing not supported */ }
+        for (const n of names) await FH.data.dropDatabase(n);
+      }
+    } catch (e) { /* removed next time */ }
     location.reload();
   }
   /* Someone opened an invite link: check it, then ask them to confirm. */

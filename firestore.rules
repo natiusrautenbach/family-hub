@@ -150,8 +150,10 @@ service cloud.firestore {
             && shortText(request.resource.data.displayName, 60));
 
         // Administrators remove people (never the owner); anyone but the owner may leave.
+        // The owner's own record goes last, when the owner deletes the whole family.
         allow delete: if (isAdmin(fid) && resource.data.role != 'owner')
-          || (uid == request.auth.uid && isMember(fid) && resource.data.role != 'owner');
+          || (uid == request.auth.uid && isMember(fid) && resource.data.role != 'owner')
+          || (uid == request.auth.uid && resource.data.role == 'owner' && !exists(famPath(fid)));
       }
 
       // Invite links. Anyone signed in who has the link may read that one invite
@@ -186,7 +188,8 @@ service cloud.firestore {
           && request.resource.data.updatedAt >= resource.data.updatedAt
           && request.resource.data.owner == resource.data.get('owner', request.resource.data.owner)
           && mayWrite(me(fid), request.resource.data, false);
-        allow delete: if false;
+        // Records are only ever removed when the owner deletes the whole family.
+        allow delete: if isOwner(fid);
       }
     }
 
