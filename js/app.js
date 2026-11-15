@@ -8,7 +8,7 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '0.5.0';
+  const VERSION = '0.5.1';
   const MILESTONE = 5;
 
   /* ---------- Small helpers ---------- */
@@ -719,9 +719,11 @@
     const open = S.ledger.filter(l => l.owner === id && M.leftOf(l) > 0);
     const owes = open.filter(l => l.dir === 'owes').reduce((n, l) => n + M.leftOf(l), 0);
     const owe = open.filter(l => l.dir === 'owe').reduce((n, l) => n + M.leftOf(l), 0);
-    return { accs, savings: accs.reduce((n, a) => n + balOf(a), 0), owes, owe, net: owe - owes };
+    const savings = accs.reduce((n, a) => n + balOf(a), 0);
+    /* The child's total: savings, plus what you owe them, minus what they owe you. */
+    return { accs, savings, owes, owe, net: savings + owe - owes };
   }
-  const netText = (id, m) => m.net > 0 ? `You owe ${esc(nameOf(id))} ${M.fmt(m.net)} overall` : m.net < 0 ? `${esc(nameOf(id))} owes you ${M.fmt(-m.net)} overall` : 'Nothing owed either way';
+  const netText = (id, m) => `${esc(nameOf(id))}'s total: <b class="${m.net < 0 ? 'neg' : ''}">${M.fmt(m.net)}</b>`;
 
   function childMoneyCard(id) {
     const m = moneyOf(id);
@@ -742,9 +744,9 @@
     return `<div class="view">
       <section class="card" style="margin-bottom:14px"><div class="card-h"><h3>All children</h3></div>
         <div class="tbl"><table class="ov"><thead><tr><th>Child</th><th>Savings</th><th>Owes you</th><th>You owe</th><th>Net</th></tr></thead><tbody>
-        ${S.children.map(c => { const x = moneyOf(c.id); return `<tr class="${c.id === id ? 'sel' : ''}"><td><button data-act="money-child" data-v="${c.id}">${avatar(c)}${esc(c.name)}</button></td><td>${M.fmt(x.savings)}</td><td>${M.fmt(x.owes)}</td><td>${M.fmt(x.owe)}</td><td class="${x.net > 0 ? 'neg' : x.net < 0 ? 'pos' : ''}" style="font-weight:700">${x.net ? (x.net > 0 ? '−' : '+') : ''}${M.fmt(Math.abs(x.net))}</td></tr>`; }).join('')}
+        ${S.children.map(c => { const x = moneyOf(c.id); return `<tr class="${c.id === id ? 'sel' : ''}"><td><button data-act="money-child" data-v="${c.id}">${avatar(c)}${esc(c.name)}</button></td><td>${M.fmt(x.savings)}</td><td>${M.fmt(x.owes)}</td><td>${M.fmt(x.owe)}</td><td class="${x.net < 0 ? 'neg' : ''}" style="font-weight:700">${M.fmt(x.net)}</td></tr>`; }).join('')}
         </tbody></table></div>
-        <p class="meta" style="margin-top:8px">Net is from your side: minus means you owe the child.</p></section>
+        <p class="meta" style="margin-top:8px">Net is each child's total: savings, plus what you owe them, minus what they owe you.</p></section>
       <div class="row" style="margin-bottom:12px">${avatar(kid, true)}<div><div class="big">${esc(kid.name)}</div><div class="muted">${netText(id, m)}</div></div></div>
       <div class="split">
         <div class="stat"><div class="k">Savings</div><div class="v">${M.fmt(m.savings)}</div></div>
@@ -781,30 +783,38 @@
     </section>`;
   }
 
+  /* Savings goals are filled in priority order from the account balance.
+     "In order" shows how far the savings reach down the list; "On its own"
+     compares all the savings with that goal alone, so you can see when a
+     lower goal could be bought now instead. */
   function goalsBlock(a, bal, goals) {
-    if (S.editAlloc === a.id) {
-      return `<div class="sgoals editing" data-acc="${a.id}">
-        <div class="flbl">Share of ${M.fmt(bal)} per goal</div>
-        ${goals.map(g => `<div class="arow" data-g="${g.id}">
-          <div class="min0"><b>${esc(g.name)}</b><div class="meta">Target ${M.fmt(g.target)}</div></div>
-          <div class="pctin"><input id="alloc-${g.id}" inputmode="decimal" value="${String(M.pctRound(g.pct || 0)).replace('.', ',')}" aria-label="Share for ${esc(g.name)} in percent"><span>%</span></div>
-          <span class="amt" id="allocamt-${g.id}">${M.fmt(M.shareOf(bal, g.pct))}</span>
-          <div class="row" style="gap:6px;flex-wrap:nowrap"><button type="button" class="btn sm" data-act="alloc-first" data-v="${g.id}">Complete first</button></div>
-        </div>`).join('')}
-        <div class="meta" id="allocsum">${allocSumText(bal, goals.reduce((n, g) => n + (g.pct || 0), 0))}</div>
-        <div class="err" id="alloc-err" role="alert"></div>
-        <div class="row" style="justify-content:flex-end;gap:8px"><button class="btn sm" data-act="alloc-even">Split evenly</button><button class="btn sm" data-act="alloc-cancel">Cancel</button><button class="btn sm pri" data-act="alloc-save" data-v="${a.id}">Save</button></div>
+    const active = goals.filter(g => g.status !== 'reached').sort(goalOrder);
+    const reached = goals.filter(g => g.status === 'reached').sort((x, y) => (y.reachedAt || '').localeCompare(x.reachedAt || ''));
+    let left = Math.max(0, bal);
+    const rows = active.map((g, i) => {
+      const inOrder = Math.min(left, g.target); left -= inOrder;
+      const alone = Math.min(Math.max(0, bal), g.target);
+      const pIn = g.target ? Math.floor(inOrder / g.target * 100) : 0, pAl = g.target ? Math.floor(alone / g.target * 100) : 0;
+      const canBuy = bal >= g.target;
+      return `<div class="goal2">
+        <div class="row" style="justify-content:space-between;flex-wrap:nowrap;align-items:flex-start">
+          <button class="min0 slink" data-act="goal-edit" data-v="${g.id}"><b>${i + 1}. ${esc(g.name)}</b><span class="sb">${M.fmt(g.target)}${g.by ? ` by ${C.MON[C.toD(g.by).getMonth()]} ${g.by.slice(0, 4)}` : ''}</span></button>
+          <span class="row" style="gap:4px;flex-wrap:nowrap"><button class="iconbtn sm" data-act="goal-up" data-v="${g.id}" aria-label="Move ${esc(g.name)} up" ${i === 0 ? 'disabled' : ''}>↑</button><button class="iconbtn sm" data-act="goal-down" data-v="${g.id}" aria-label="Move ${esc(g.name)} down" ${i === active.length - 1 ? 'disabled' : ''}>↓</button></span>
+        </div>
+        <div class="gbar"><span class="glbl">In order</span><span class="track"><span class="fill" style="width:${pIn}%"></span></span><span class="gpct">${pIn}%</span></div>
+        <div class="gbar alone"><span class="glbl">On its own</span><span class="track"><span class="fill" style="width:${pAl}%"></span></span><span class="gpct">${pAl}%</span></div>
+        <div class="row" style="justify-content:space-between;gap:8px"><span class="meta">${inOrder >= g.target ? 'Covered in priority order' : canBuy ? `<b class="pos">Can buy now</b> if you choose it first` : `${M.fmt(g.target - alone)} more needed on its own`}</span>
+          ${canBuy ? `<button class="btn sm pri" data-act="goal-reach" data-v="${g.id}">Goal reached</button>` : ''}</div>
       </div>`;
-    }
-    const used = goals.reduce((n, g) => n + (g.pct || 0), 0);
+    }).join('');
     return `<div class="sgoals">
-      ${goals.map(g => { const amt = M.shareOf(Math.max(0, bal), g.pct); const done = amt >= g.target; return `<button class="goal slink" data-act="goal-edit" data-v="${g.id}"><span class="row" style="justify-content:space-between;font-size:14px"><b>${esc(g.name)}</b><span class="muted">${M.fmt(g.target)}${g.by ? ` by ${C.MON[C.toD(g.by).getMonth()]} ${g.by.slice(0, 4)}` : ''}</span></span>
-        <span class="track"><span class="fill" style="width:${Math.min(100, g.target ? amt / g.target * 100 : 0)}%"></span></span>
-        <span class="muted" style="font-size:13px">${M.fmt(Math.min(amt, g.target))} · ${pctTxt(g.pct || 0)} of savings · ${done ? '<b class="pos">Goal reached</b>' : `${M.fmt(g.target - amt)} to go`}</span></button>`; }).join('')}
-      <div class="row" style="justify-content:space-between;gap:8px"><span class="meta">${goals.length ? (used < 99.995 ? `Not set aside for a goal: ${M.fmt(M.shareOf(Math.max(0, bal), 100 - used))}` : 'All savings set aside for goals') : 'No savings goals yet.'}</span>
-        <span class="row" style="gap:6px">${goals.length > 1 ? `<button class="btn sm" data-act="alloc-edit" data-v="${a.id}">Edit allocation</button>` : ''}<button class="btn sm" data-act="goal-add" data-v="${a.id}">Add goal</button></span></div>
+      ${active.length ? `<div class="flbl">Savings goals, in priority order</div>${rows}` : ''}
+      <div class="row" style="justify-content:space-between;gap:8px"><span class="meta">${active.length ? (left > 0 ? `${M.fmt(left)} left after all goals` : '') : 'No savings goals yet.'}</span>
+        <button class="btn sm" data-act="goal-add" data-v="${a.id}">Add goal</button></div>
+      ${reached.length ? `<details class="pastsess"><summary>Reached (${reached.length})</summary>${reached.map(g => `<div class="line"><span class="min0"><span class="lti">${esc(g.name)}</span><span class="sb">Reached ${g.reachedAt ? C.fmtDay(g.reachedAt) + ' ' + g.reachedAt.slice(0, 4) : ''}${g.spent ? ` · spent ${M.fmt(g.spent)}` : ''}</span></span><button class="btn sm" data-act="goal-reopen" data-v="${g.id}">Undo</button></div>`).join('')}</details>` : ''}
     </div>`;
   }
+  const goalOrder = (x, y) => (x.order ?? 0) - (y.order ?? 0) || (x.createdAt || '').localeCompare(y.createdAt || '');
   const pctTxt = p => `${String(M.pctRound(p)).replace('.', ',')}%`;
   function allocSumText(bal, sum) {
     const left = 100 - sum;
@@ -853,18 +863,28 @@
   function goalSheet() {
     const sh = S.sheet;
     const g = sh.id ? S.goals.find(x => x.id === sh.id) : null;
-    const accId = g ? g.account : sh.account;
-    const others = S.goals.filter(x => x.account === accId && x.id !== g?.id).reduce((n, x) => n + (x.pct || 0), 0);
-    const free = Math.max(0, M.pctRound(100 - others));
     return panel(g ? `Edit ${esc(g.name)}` : 'Add a savings goal', `
       <form class="form" data-form="goal" style="margin-top:14px">
         <label class="full">Saving for<input id="f-title" value="${esc(g?.name || '')}" placeholder="e.g. New bicycle" autocomplete="off"></label>
         <label>Target (R)<input id="f-amount" inputmode="decimal" value="${g ? M.toInput(g.target) : ''}" placeholder="e.g. 2 500" autocomplete="off"></label>
         <label>By (optional)<input id="f-date" type="date" value="${g?.by || ''}"></label>
-        <label>Share of savings (%)<input id="f-pct" inputmode="decimal" value="${g ? String(M.pctRound(g.pct || 0)).replace('.', ',') : String(free).replace('.', ',')}" autocomplete="off"></label>
-        <p class="hint full">${free < 100 ? `${pctTxt(free)} of this account is free for this goal. ` : ''}Change the split between goals any time with Edit allocation.</p>
+        ${g ? '' : '<p class="hint full">New goals go to the bottom of the list. Use the arrows to change the order.</p>'}
         <div class="err full" id="f-err" role="alert"></div>
         <div class="actions full">${g ? delBtn(sh, 'this goal') : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${g ? 'Save' : 'Add goal'}</button></div>
+      </form>`);
+  }
+  function reachSheet() {
+    const sh = S.sheet;
+    const g = S.goals.find(x => x.id === sh.id);
+    const a = S.accounts.find(x => x.id === g.account);
+    return panel(`Goal reached: ${esc(g.name)}`, `
+      <p class="small" style="margin:10px 0">Well done! This records what was spent and moves the goal to the Reached list. The goals below it move up.</p>
+      <form class="form" data-form="reach">
+        <label>Amount spent (R)<input id="f-amount" inputmode="decimal" value="${M.toInput(g.target)}" autocomplete="off"></label>
+        <label>Date<input id="f-date" type="date" value="${C.today()}"></label>
+        <label class="chk full"><input id="f-withdraw" type="checkbox" checked>Record it as a withdrawal from ${esc(a.name)}</label>
+        <div class="err full" id="f-err" role="alert"></div>
+        <div class="actions full"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">Mark as reached</button></div>
       </form>`);
   }
   function ledgerSheet() {
@@ -939,19 +959,37 @@
     const accId = g ? g.account : sh.account;
     const a = S.accounts.find(x => x.id === accId);
     const name = val('#f-title'), target = amt('#f-amount'), by = val('#f-date');
-    const pct = Number(val('#f-pct').replace(',', '.').replace('%', '') || '0');
     if (!name) return fail('Say what the goal is for, for example New bicycle.');
     if (!(target > 0)) return fail('Enter the target in rand, for example 2 500.');
     if (by && !C.isDate(by)) return fail('The By date is not a valid date.');
-    const others = S.goals.filter(x => x.account === accId && x.id !== g?.id).reduce((n, x) => n + (x.pct || 0), 0);
-    const free = M.pctRound(Math.max(0, 100 - others));
-    if (!Number.isFinite(pct) || pct < 0 || pct > free + 0.005) return fail(`Only ${pctTxt(free)} of this account isn't set aside yet. Enter that or less, then use Edit allocation to move more to this goal.`);
-    const rec = { owner: a.owner, account: a.id, name, target, by, pct: M.pctRound(pct) };
-    if (g) rec.id = g.id; else rec.order = S.goals.filter(x => x.account === accId).length;
+    const rec = { owner: a.owner, account: a.id, name, target, by };
+    if (g) rec.id = g.id; else { rec.status = 'active'; rec.order = Math.max(-1, ...S.goals.filter(x => x.account === accId).map(x => x.order ?? 0)) + 1; }
     await data.save('goals', rec);
     S.sheet = null; await load(); render();
     toast(g ? 'Goal saved.' : `Goal added: ${name}.`);
     return true;
+  }
+  async function saveReach() {
+    const sh = S.sheet;
+    const g = S.goals.find(x => x.id === sh.id);
+    const v = amt('#f-amount'), date = val('#f-date');
+    if (!(v > 0)) return fail('Enter the amount spent in rand.');
+    if (!C.isDate(date)) return fail('Choose the date.');
+    if ($('#f-withdraw').checked) await data.save('entries', { owner: g.owner, account: g.account, date, amount: -v, type: 'Withdrawal', note: `Goal reached: ${g.name}` });
+    await data.save('goals', { id: g.id, status: 'reached', reachedAt: date, spent: v });
+    S.sheet = null; await load(); render();
+    toast(`${g.name} reached. The next goal is now first in line.`);
+    return true;
+  }
+  /* Moves a goal up or down and renumbers the list. */
+  async function moveGoal(id, dir) {
+    const g = S.goals.find(x => x.id === id);
+    const list = S.goals.filter(x => x.account === g.account && x.status !== 'reached').sort(goalOrder);
+    const i = list.findIndex(x => x.id === id), j = i + dir;
+    if (j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    for (const [k, x] of list.entries()) if ((x.order ?? -1) !== k) await data.save('goals', { id: x.id, order: k });
+    await load(); render();
   }
   async function saveLedger() {
     const sh = S.sheet;
@@ -1351,7 +1389,7 @@
     el.innerHTML = k === 'child' ? childSheet() : k === 'restore' ? restoreSheet() : k === 'activity' ? activitySheet()
       : k === 'reminder' ? reminderSheet() : k === 'event' ? eventSheet() : k === 'task' ? taskSheet() : k === 'taskview' ? taskViewSheet()
       : k === 'period' ? periodSheet() : k === 'exam' ? examSheet() : k === 'session' ? sessionSheet()
-      : k === 'account' ? accountSheet() : k === 'entry' ? entrySheet() : k === 'goal' ? goalSheet() : k === 'ledger' ? ledgerSheet() : k === 'settle' ? settleSheet() : k === 'term' ? termSheet() : dayoffSheet();
+      : k === 'account' ? accountSheet() : k === 'entry' ? entrySheet() : k === 'goal' ? goalSheet() : k === 'ledger' ? ledgerSheet() : k === 'settle' ? settleSheet() : k === 'reach' ? reachSheet() : k === 'term' ? termSheet() : dayoffSheet();
     el.hidden = false;
   }
 
@@ -1748,6 +1786,15 @@
         case 'hist-all': S.histAll[v] = !S.histAll[v]; render(); return;
         case 'goal-add': S.sheet = { kind: 'goal', account: v }; renderSheet(); setTimeout(() => $('#f-title')?.focus(), 30); return;
         case 'goal-edit': S.sheet = { kind: 'goal', id: v }; renderSheet(); return;
+        case 'goal-up': await moveGoal(v, -1); return;
+        case 'goal-down': await moveGoal(v, 1); return;
+        case 'goal-reach': S.sheet = { kind: 'reach', id: v }; renderSheet(); return;
+        case 'goal-reopen': {
+          const g = S.goals.find(x => x.id === v);
+          const order = Math.max(-1, ...S.goals.filter(x => x.account === g.account && x.status !== 'reached').map(x => x.order ?? 0)) + 1;
+          await data.save('goals', { id: g.id, status: 'active', reachedAt: '', order });
+          await load(); render(); toast(`${g.name} is back in the list${g.spent ? '. The withdrawal is still in the history; delete it there if it was a mistake' : ''}.`); return;
+        }
         case 'alloc-edit': S.editAlloc = v; S.editBal = null; render(); return;
         case 'alloc-cancel': S.editAlloc = null; render(); return;
         case 'alloc-even': { const rows = allocRows(); const out = M.splitEvenly(rows.map(r => ({ id: r.dataset.g }))); for (const o of out) { const el = document.getElementById('alloc-' + o.id); if (el) el.value = String(o.pct).replace('.', ','); } updAlloc(); return; }
@@ -1795,6 +1842,7 @@
       if (f === 'account') await saveAccount();
       if (f === 'entry') await saveEntry();
       if (f === 'goal') await saveGoal();
+      if (f === 'reach') await saveReach();
       if (f === 'ledger') await saveLedger();
       if (f === 'settle') await saveSettle();
       if (f === 'exam') await saveExam();

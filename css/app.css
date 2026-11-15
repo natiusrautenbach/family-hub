@@ -405,3 +405,19 @@ label.btn.disabled{opacity:.5;pointer-events:none}
 .arow{grid-template-columns:minmax(0,1fr) 92px 96px auto}
 .big.neg{color:var(--bad)}
 @media (max-width:420px){.split .stat .v{font-size:16px}}
+
+/* ---------- 0.5.1: goals in priority order ---------- */
+.goal2{display:grid;gap:6px;padding:10px 0;border-top:1px dashed var(--line)}
+.flbl + .goal2{border-top:0;padding-top:4px}
+.goal2 .slink b{display:block}
+.gbar{display:grid;grid-template-columns:76px minmax(0,1fr) 40px;gap:8px;align-items:center}
+.glbl{font-size:11.5px;color:var(--muted);font-weight:600}
+.gpct{font-size:12.5px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+.gbar .track{display:block;height:8px;grid-column:auto}
+.gbar .fill{display:block;height:100%}
+.gbar.alone .fill{background:color-mix(in srgb,var(--c) 45%,var(--surface))}
+.iconbtn.sm:disabled{opacity:.35}
+@media (max-width:560px){
+  table.ov{min-width:0}
+  table.ov th:nth-child(3),table.ov td:nth-child(3),table.ov th:nth-child(4),table.ov td:nth-child(4){display:none}
+}
