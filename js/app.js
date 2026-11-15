@@ -1,5 +1,5 @@
 /* Herding Cats · Copyright (c) 2026 Natius. All rights reserved. See LICENSE. */
-/* Herding Cats · app (beta, milestone 7: Phase 1 complete)
+/* Herding Cats · app (beta, Phase 2 milestone 2.1: accounts and families)
    Screens: first-time setup, Today, Calendar (activities, reminders, school
    terms, tasks, exams, study), Tasks, Study planner, Money (accounts, savings
    goals, money owed, chores, reward goals), child pages, Settings. */
@@ -8,8 +8,9 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '1.1.0';
+  const VERSION = '2.1.0';
   const MILESTONE = 7;
+  const PHASE2 = '2.1'; // Phase 2 milestone in this build
 
   /* ---------- Small helpers ---------- */
   const $ = s => document.querySelector(s);
@@ -165,7 +166,7 @@
     const rows = S.setup.rows;
     return `<div class="solo">
       <div class="hero"><span class="hcat" aria-hidden="true">${FH.cats.welcome}</span><div class="eyebrow">Herding Cats · family calendar</div><h1>Welcome</h1>
-        <p class="digest">Add your children to get started. Everything you enter stays on this device; nothing is uploaded.</p></div>
+        <p class="digest">${S.session ? 'Add your children to get started.' : 'Add your children to get started. Everything you enter stays on this device; nothing is uploaded.'}</p></div>
       <section class="card stack">
         <label class="fld">Family name (optional)<input id="su-family" placeholder="e.g. The Rautenbachs" value="${esc(S.setup.family)}" autocomplete="off"></label>
         <div class="flbl">Children</div>
@@ -177,7 +178,7 @@
           <button class="btn pri" data-act="su-finish">Start using Herding Cats</button>
         </div>
       </section>
-      <p class="muted small center">Setting up a second device? Export a backup on the first device, then choose Restore from a backup here.</p>
+      <p class="muted small center">${S.session ? 'For now, what you add stays on this device. Sharing with the rest of your family arrives in the next update.' : 'Setting up a second device? Export a backup on the first device, then choose Restore from a backup here.'}</p>
       ${restoreInput()}
     </div>`;
   }
@@ -197,6 +198,20 @@
     return `<div class="kids">${S.children.map(c => `<button class="kid" style="--c:var(--${esc(c.colour)})" data-act="open-child" data-v="${c.id}">
         <span class="row" style="gap:8px;flex-wrap:nowrap">${avatar(c)}<span class="nm">${esc(c.name)}</span></span>
         <span class="st">${esc(c.grade || '')}</span></button>`).join('')}</div>`;
+  }
+
+  const ROLE_LABEL = { owner: 'Family administrator', parent: 'Parent', carer: 'Carer', child_view: 'Child, view only', child_limited: 'Child, limited' };
+  function signInCard() {
+    const s = S.session;
+    if (!s) return '';
+    const isOwner = s.role === 'owner';
+    return `<section class="card" id="account"><div class="card-h"><h3>Your account</h3><span class="pill on">${esc(ROLE_LABEL[s.role] || s.role)}</span></div>
+        <div class="set"><span class="min0"><b>${esc(s.name)}</b><span class="muted"> · ${esc(s.email)}</span></span></div>
+        <div class="set"><span class="min0">Family: <b>${esc(S.family || s.familyName)}</b>${isOwner ? '<span class="muted"> · you are its administrator</span>' : ''}</span></div>
+        <p class="hint" style="margin-top:8px">Inviting your family, roles for each person and children's logins arrive in the next updates. For now, what you add stays on this device.</p>
+        <div class="row" style="margin-top:10px"><button class="btn sm" data-act="acct-signout">Sign out</button></div>
+      </section>
+      <section class="card"><div class="card-h"><h3>Privacy</h3></div>${FH.account.PRIVACY}</section>`;
   }
 
   function roadmap() {
@@ -1394,18 +1409,14 @@
           : '<p class="small">In your browser menu, choose <b>Install app</b> or <b>Add to Home screen</b>.</p>'}
       </section>
 
-      <section class="card"><div class="card-h"><h3>Access</h3></div>
-        <div class="set"><span><b>Parent</b> · sees and changes everything</span><span class="pill on">You</span></div>
-        <div class="set"><span><b>Child, view only</b> · own schedule and balances</span><span class="pill">Phase 3</span></div>
-        <div class="set"><span><b>Child, limited edit</b> · tick off tasks, add homework, suggest IOUs for approval</span><span class="pill">Phase 3</span></div>
-      </section>
+      ${signInCard()}
 
       ${helpCard()}
 
       ${roadmap()}
 
       <section class="card"><div class="card-h"><h3>About</h3></div>
-        <p class="meta">Herding Cats beta ${VERSION} · milestone ${MILESTONE} of 7${inFrame ? ' · test link' : ''}</p>
+        <p class="meta">Herding Cats beta ${VERSION} · Phase 2, milestone ${PHASE2}${inFrame ? ' · test link' : ''}${FH.cloud && FH.cloud.kind === 'fake' ? ' · test accounts (not online)' : ''}</p>
         <p class="meta" style="margin-top:4px">© 2026 Natius. All rights reserved.</p>
       </section>
     </div></div>`;
@@ -1586,11 +1597,12 @@
   const TITLES = { today: 'Herding Cats', calendar: 'Calendar', tasks: 'Tasks', study: 'Study planner', money: 'Money', settings: 'Settings' };
 
   function render() {
+    if (FH.account && FH.account.blocking) return; // the sign-in screens are showing
     const app = $('#app');
     if (S.error) { app.innerHTML = vError(); renderSheet(); return; }
     if (!S.ready) { app.innerHTML = '<div class="solo"><p class="muted center" style="padding-top:40px">Opening Herding Cats…</p></div>'; return; }
     if (!S.children.length && !S.setupDone) {
-      if (!S.setup) S.setup = { family: '', rows: [{ name: '', grade: 'Grade 1', colour: 'c1' }] };
+      if (!S.setup) S.setup = { family: S.family || '', rows: [{ name: '', grade: 'Grade 1', colour: 'c1' }] };
       app.innerHTML = vSetup(); renderSheet(); return;
     }
     const v = S.view;
@@ -1875,6 +1887,7 @@
         case 'su-rm': readSetupInputs(); S.setup.rows.splice(Number(v), 1); render(); return;
         case 'su-col': { readSetupInputs(); const [i, k] = v.split('|'); S.setup.rows[Number(i)].colour = k; render(); return; }
         case 'su-finish': readSetupInputs(); await finishSetup(); return;
+        case 'acct-signout': FH.account.signOut(); return;
         case 'export-file': await exportFile(); return;
         case 'export-copy': await exportCopy(); return;
         case 'go-restore': startRestore(); return;
@@ -2136,7 +2149,7 @@
       if (f === 'term') await saveTerm();
       if (f === 'dayoff') await saveDayoff();
       if (f === 'balance') await saveBalance(ev.target.dataset.v);
-      if (f === 'family') { await data.setSetting('familyName', $('#set-family').value.trim()); S.family = $('#set-family').value.trim(); render(); toast('Family name saved.'); }
+      if (f === 'family') { await data.setSetting('familyName', $('#set-family').value.trim()); S.family = $('#set-family').value.trim(); if (FH.account) FH.account.renameFamily(S.family); render(); toast('Family name saved.'); }
     } catch (e) { console.error(e); toast(`Nothing was saved: ${e.message}`); }
   });
 
@@ -2182,9 +2195,15 @@
     fromHash();
     render();
     try {
-      await data.ready();
+      if (FH.account) {
+        const s = await FH.account.gate();
+        S.session = s;
+        data.useDatabase('hc-' + s.familyId);
+        await data.ready({ id: s.uid, role: ['owner', 'parent'].includes(s.role) ? 'parent' : s.role, name: s.name, personId: s.personId });
+      } else await data.ready();
       await importOfficial();
       await loadSettings();
+      if (S.session && !S.family && S.session.familyName) { S.family = S.session.familyName; await data.setSetting('familyName', S.family); }
       await load();
       await refreshStorage();
       S.ready = true;

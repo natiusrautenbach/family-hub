@@ -1,0 +1,63 @@
+rules_version = '2';
+// Herding Cats · Copyright (c) 2026 Natius. All rights reserved. See LICENSE.
+// Who may read and change what in the family database. The server checks these
+// rules on every request, so a phone only ever receives what its user may see.
+//
+//   users/{uid}                    which family a person belongs to (only they can see it)
+//   families/{fid}                 the family: name, administrator, plan, consent
+//   families/{fid}/members/{uid}   each person in the family and their role
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function famPath(fid) { return /databases/$(database)/documents/families/$(fid); }
+    function memberPath(fid, uid) { return /databases/$(database)/documents/families/$(fid)/members/$(uid); }
+    function isMember(fid) { return signedIn() && exists(memberPath(fid, request.auth.uid)); }
+    function myRole(fid) { return get(memberPath(fid, request.auth.uid)).data.role; }
+    function isOwner(fid) { return isMember(fid) && myRole(fid) == 'owner'; }
+    function shortText(v, max) { return v is string && v.size() > 0 && v.size() <= max; }
+
+    // Each person's pointer to their family. Only they can read or change it.
+    match /users/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['familyId', 'displayName', 'email', 'createdAt', 'updatedAt'])
+        && (request.resource.data.familyId == null || request.resource.data.familyId is string);
+    }
+
+    match /families/{fid} {
+      allow read: if isMember(fid);
+
+      // A family is created together with its owner's member record, in one batch.
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['name', 'ownerUid', 'code', 'plan', 'maxMembers', 'createdAt', 'consent'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && shortText(request.resource.data.name, 80)
+        && request.resource.data.plan == 'beta'
+        && request.resource.data.maxMembers == 8
+        && request.resource.data.consent.by == request.auth.uid
+        && getAfter(memberPath(fid, request.auth.uid)).data.role == 'owner';
+
+      // Only the owner may rename the family; the owner and plan can't be changed here.
+      allow update: if isOwner(fid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+        && shortText(request.resource.data.name, 80);
+      allow delete: if isOwner(fid);
+
+      match /members/{uid} {
+        allow read: if isMember(fid);
+
+        // The owner's own record, only while the family itself is being created.
+        allow create: if signedIn() && uid == request.auth.uid
+          && !exists(famPath(fid))
+          && getAfter(famPath(fid)).data.ownerUid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['uid', 'role', 'displayName', 'email', 'joinedAt', 'personId'])
+          && request.resource.data.uid == uid
+          && request.resource.data.role == 'owner'
+          && shortText(request.resource.data.displayName, 60);
+
+        allow update, delete: if isOwner(fid);
+      }
+    }
+  }
+}

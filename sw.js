@@ -3,12 +3,13 @@
    Files are fetched fresh (not from the browser cache) when a new version installs.
    Keeps the app's own files on the device so it opens without internet.
    Raise VERSION with every release so devices pick up the new files. */
-const VERSION = 'fh-1.1.0';
+const VERSION = 'fh-2.1.0';
 const SHELL = [
-  './', 'index.html', 'css/app.css', 'js/db.js', 'js/cal.js', 'js/study.js', 'js/money.js', 'js/chores.js', 'js/cats.js', 'js/app.js', 'manifest.webmanifest',
+  './', 'index.html', 'css/app.css', 'js/db.js', 'js/cal.js', 'js/study.js', 'js/money.js', 'js/chores.js', 'js/cats.js', 'js/cloud.js', 'js/account.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
 ];
 const FONTS = 'fh-fonts';
+const LIBS = 'fh-libs'; // Firebase sign-in and database code, kept so the app opens offline
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
@@ -16,7 +17,7 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys()
-    .then(keys => Promise.all(keys.filter(k => k !== VERSION && k !== FONTS).map(k => caches.delete(k))))
+    .then(keys => Promise.all(keys.filter(k => k !== VERSION && k !== FONTS && k !== LIBS).map(k => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 
@@ -34,7 +35,20 @@ self.addEventListener('fetch', e => {
     }));
     return;
   }
+  /* Firebase code from Google: saved copy first (the version is fixed in its address). */
+  if (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/')) {
+    e.respondWith(caches.open(LIBS).then(async c => {
+      const hit = await c.match(req);
+      if (hit) return hit;
+      const r = await fetch(req);
+      if (r.ok) c.put(req, r.clone());
+      return r;
+    }));
+    return;
+  }
   if (url.origin !== self.location.origin) return;
+  /* Firebase's own sign-in pages on this address are never cached. */
+  if (url.pathname.startsWith('/__/')) return;
 
   /* Pages: try the network first so updates arrive, fall back to the saved copy offline. */
   if (req.mode === 'navigate') {

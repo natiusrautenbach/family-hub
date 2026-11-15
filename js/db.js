@@ -10,7 +10,7 @@
   const FH = (window.FH = window.FH || {});
 
   /* Internal names stay 'family-hub' after the rename to Herding Cats, so existing data and backups keep working. */
-  const DB_NAME = 'family-hub';
+  let DB_NAME = 'family-hub';
   const DB_VERSION = 6;
   const BACKUP_FORMAT = 1;
 
@@ -52,6 +52,7 @@
       let req;
       try { req = indexedDB.open(DB_NAME, DB_VERSION); }
       catch (e) { reject(e); return; }
+      req.onblocked = () => console.warn('Database upgrade waiting for another tab to close.');
       req.onupgradeneeded = () => {
         const db = req.result;
         for (const [name, def] of Object.entries(SCHEMA)) {
@@ -169,6 +170,7 @@
   /* ---------- The one data API the screens use ---------- */
   let currentUser = null;
   let deviceId = null;
+  let sessionUser = null; // the signed-in family member (Phase 2), or null for the local-only beta
 
   const data = {
     get user() { return currentUser; },
@@ -257,7 +259,7 @@
       map.meta.push({ id: 'restoredAt', value: now(), updatedAt: now() });
       await raw.clearAll(stores);
       await raw.putMany(map);
-      await data.signIn();
+      await (sessionUser ? data.signInAs(sessionUser) : data.signIn());
     },
 
     /* Sets up this device on first open and signs in the parent user. */
@@ -275,7 +277,33 @@
       return parent;
     },
 
-    async ready() { await open(); return data.signIn(); },
+    /* Phase 2: signs in the family member who signed in to their account. Their
+       record is kept in the users store so changes are stamped with their name. */
+    async signInAs(member) {
+      deviceId = await data.getSetting('deviceId', null);
+      if (!deviceId) { deviceId = uuid(); await raw.put('meta', { id: 'deviceId', value: deviceId, updatedAt: now() }); }
+      const t = now();
+      const prev = await raw.get('users', member.id);
+      const rec = Object.assign({}, prev || { createdAt: t, createdBy: 'system' }, {
+        id: member.id, role: member.role, name: member.name, personId: member.personId || null,
+        updatedAt: t, device: deviceId, deleted: false,
+      });
+      await raw.put('users', rec);
+      sessionUser = member;
+      currentUser = rec;
+      return rec;
+    },
+
+    /* Each family gets its own database on the device, so two families signing in
+       on one device never see each other's data. Call before ready(). */
+    useDatabase(name) {
+      if (name === DB_NAME) return;
+      if (dbp) { dbp.then(db => db.close()).catch(() => {}); dbp = null; }
+      DB_NAME = name;
+    },
+    get databaseName() { return DB_NAME; },
+
+    async ready(member) { await open(); return member ? data.signInAs(member) : data.signIn(); },
   };
 
   FH.data = data;

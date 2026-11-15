@@ -453,3 +453,15 @@ label.btn.disabled{opacity:.5;pointer-events:none}
 .ecat .empty{max-width:40ch;padding-top:2px}
 .coming .ecat-img{margin:-4px 0 -6px}
 @media (max-width:380px){.tcat{width:36px;height:36px}}
+
+/* ---------- Phase 2: sign-in screens and account ---------- */
+.btn.ghost{background:transparent;border-color:transparent;color:var(--accent);padding-left:4px;padding-right:4px}
+.gbtn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:9px 13px}
+.or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
+.check{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:1.4}
+.check input{width:20px;height:20px;flex:none;margin-top:1px;accent-color:var(--accent)}
+.privacy{background:var(--sunk);border-radius:10px;padding:12px}
+.privacy .small{margin-top:6px}
+.ok{color:var(--good);font-weight:600}
+form.stack .btn.pri{justify-self:start}
