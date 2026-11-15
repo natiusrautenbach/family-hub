@@ -77,7 +77,7 @@ try {
   ok(await pw.evaluate(() => FH.app.S.children.map(c => c.name).join()) === 'Ava', "wife's phone receives the family's data");
   if (await pw.locator('[data-act=digest-close]').count()) await pw.click('[data-act=digest-close]');
 
-  const addReminder = async (p, title) => { await p.click('.fab'); await p.click('[data-act=add-type][data-v=reminder]'); await p.fill('#f-title', title); await p.fill('#f-date', '2026-11-20'); await p.click('.panel button[type=submit]'); await p.waitForTimeout(400); };
+  const addReminder = async (p, title) => { await p.click('[data-act=nav][data-v=today] >> visible=true'); await p.click('.fab'); await p.click('[data-act=add-type][data-v=reminder]'); await p.fill('#f-title', title); await p.fill('#f-date', '2026-11-20'); await p.click('.panel button[type=submit]'); await p.waitForTimeout(400); };
   await addReminder(pw, 'Swimming gala');
   const arrived = async (p, title) => p.waitForFunction(t => FH.app.S.reminders.some(r => r.title === t), title, { timeout: 20000 }).then(() => true).catch(() => false);
   ok(await arrived(pg, 'Swimming gala'), "owner's phone receives the wife's reminder live");
