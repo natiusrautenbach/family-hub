@@ -4,34 +4,100 @@
       "collectionGroup": "records",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "owner", "order": "ASCENDING" },
-        { "fieldPath": "syncAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "owner",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "syncAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "records",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "owner", "order": "ASCENDING" },
-        { "fieldPath": "money", "order": "ASCENDING" },
-        { "fieldPath": "syncAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "owner",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "money",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "syncAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "records",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "money", "order": "ASCENDING" },
-        { "fieldPath": "owner", "order": "ASCENDING" },
-        { "fieldPath": "syncAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "money",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "owner",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "syncAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "records",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "store", "order": "ASCENDING" },
-        { "fieldPath": "syncAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "store",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "syncAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "adult",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "store",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "syncAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "store",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adult",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "syncAt",
+          "order": "ASCENDING"
+        }
       ]
     }
   ],

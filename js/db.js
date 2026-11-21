@@ -134,7 +134,8 @@
     if (user.role === 'carer') return !MONEY_STORES.includes(store) && (user.kids || []).includes(owner);
     if (user.role === 'child_view' || user.role === 'child_limited') {
       if (owner === user.personId) return !MONEY_STORES.includes(store) || user.money !== false;
-      return !!user.siblings && (store === 'people' || store === 'activities');
+      const adult = store === 'people' ? rec.type === 'adult' : !!rec.adult;
+      return !!user.siblings && !adult && (store === 'people' || store === 'activities');
     }
     return false;
   }

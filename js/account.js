@@ -25,6 +25,20 @@
       if (j) { u.searchParams.delete('join'); history.replaceState(null, '', u.pathname + (u.search || '') + u.hash); }
     } catch (e) { /* no invite */ }
   })();
+  /* A family sign-in link looks like …/?u=<family code>.<username>: it opens Family sign-in
+     with both filled in (it never carries a password). It is kept on the device until that
+     person signs in, so it still works after installing the app from the link. */
+  const HINT = 'hc-signin';
+  (function catchSignin() {
+    try {
+      const u = new URL(location.href), v = u.searchParams.get('u');
+      const m = v && /^([A-Za-z0-9]{6})\.([A-Za-z0-9._-]{1,30})$/.exec(v);
+      if (m) localStorage.setItem(HINT, JSON.stringify({ code: m[1].toUpperCase(), username: m[2].toLowerCase() }));
+      if (v) { u.searchParams.delete('u'); history.replaceState(null, '', u.pathname + (u.search || '') + u.hash); }
+    } catch (e) { /* no link */ }
+  })();
+  const signinHint = () => { try { return JSON.parse(localStorage.getItem(HINT) || 'null'); } catch (e) { return null; } };
+  const clearHint = () => { try { localStorage.removeItem(HINT); } catch (e) { /* nothing kept */ } };
   const pendingJoin = () => { try { const j = sessionStorage.getItem(JOIN); if (!j) return null; const [fid, token] = j.split('.'); return { fid, token }; } catch (e) { return null; } };
   const clearJoin = () => { try { sessionStorage.removeItem(JOIN); } catch (e) { /* nothing kept */ } };
   const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error('timeout'), { code: 'unavailable' })), ms))]);
@@ -78,7 +92,12 @@
       st.error = cloud.message(e); return show('offline');
     }
     const u = cloud.user();
-    if (!u) { keep.clear(); return show(st.screen === 'loading' ? 'signin' : st.screen); }
+    if (!u) {
+      keep.clear();
+      const h = st.screen === 'loading' && !pendingJoin() ? signinHint() : null;
+      if (h) { st.code = h.code; st.username = h.username; st.fromLink = true; return show('username'); }
+      return show(st.screen === 'loading' ? 'signin' : st.screen);
+    }
     st.user = u;
     if (pendingJoin()) return showJoin(u);
     if (cached && cached.uid === u.uid) {
@@ -189,7 +208,9 @@
     st.screen = screen;
     const app = $('#app');
     if (!app || !A.blocking) return;
-    app.innerHTML = view();
+    const html = view();
+    /* The Install app button shows from the first screen, in the browser only. */
+    app.innerHTML = screen !== 'loading' && FH.install ? html.replace('<div class="solo">', `<div class="solo">${FH.install.bar(false)}`) : html;
     const f = app.querySelector('[autofocus]');
     if (f && screen !== 'loading') f.focus();
   }
@@ -228,12 +249,12 @@
       <section class="card stack">${err()}
         <div class="row"><button class="btn pri" data-gate="pending-check">Check again</button><button class="btn ghost sm" data-gate="signout">Sign out</button></div>
       </section></div>`;
-    if (s === 'username') return `<div class="solo">${hero('Family sign-in', 'For people your family administrator set up with a username, such as children. Ask them for your family code.')}
+    if (s === 'username') return `<div class="solo">${hero(st.fromLink ? `Welcome, ${esc((st.username || '').replace(/^./, c => c.toUpperCase()))}` : 'Family sign-in', st.fromLink ? 'Your family code and username are filled in. Enter the password your parent gave you.' : 'For people your family administrator set up with a username, such as children. Ask them for your family code.')}
       <section class="card stack">
         <form class="stack" data-gate-form="username" novalidate>
-          <label class="fld">Family code<input id="g-code" autocomplete="off" autocapitalize="characters" maxlength="6" value="${esc(st.code || '')}" placeholder="e.g. K7PQ2M" autofocus required></label>
+          <label class="fld">Family code<input id="g-code" autocomplete="off" autocapitalize="characters" maxlength="6" value="${esc(st.code || '')}" placeholder="e.g. K7PQ2M" ${st.fromLink ? '' : 'autofocus'} required></label>
           <label class="fld">Username<input id="g-user" autocomplete="username" autocapitalize="none" value="${esc(st.username || '')}" required></label>
-          <label class="fld">Password<input id="g-pass" type="password" autocomplete="current-password" value="${esc(st.pass)}" required></label>
+          <label class="fld">Password<input id="g-pass" type="password" autocomplete="current-password" value="${esc(st.pass)}" ${st.fromLink ? 'autofocus' : ''} required></label>
           ${err()}
           <button class="btn pri" type="submit" ${st.busy ? 'disabled' : ''}>${busy('Sign in')}</button>
         </form>
@@ -315,7 +336,7 @@
       if (!/^[A-Z0-9]{6}$/.test(code)) { st.error = 'The family code has 6 letters and numbers. Ask your family administrator for it.'; return show('username'); }
       if (!user) { st.error = 'Enter your username.'; return show('username'); }
       if (!pass) { st.error = 'Enter your password.'; return show('username'); }
-      run(async () => { const u = await cloud.signInUsername(code, user, pass); st.user = u; await findFamily(u); });
+      run(async () => { const u = await cloud.signInUsername(code, user, pass); st.user = u; clearHint(); await findFamily(u); });
     }
     if (f === 'signin') {
       const email = val('g-email'), pass = $('#g-pass').value;

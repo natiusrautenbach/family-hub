@@ -36,7 +36,7 @@ jobs:
       - name: Check the code
         run: for f in js/*.js sw.js; do node --check "$f"; done
       - name: Run rule and screen tests on the emulators
-        run: npx firebase emulators:exec --project demo-herding-cats --only auth,firestore,hosting "node tests/siblings.mjs"
+        run: npx firebase emulators:exec --project demo-herding-cats --only auth,firestore,hosting "node tests/rules.mjs && node tests/e2e.mjs && node tests/siblings.mjs"
 
   publish:
     needs: test

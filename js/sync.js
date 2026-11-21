@@ -113,11 +113,13 @@
       data.onChange = (store, rec) => { data.outbox.add(store, rec).then(() => { recount(); send(store, rec); }); };
       /* The first time this device syncs this family, send what it already has. */
       /* The first time this device syncs this family, send what it already has. Records
-         sent before milestone 2.3 are sent again once, now saying whose they are. */
-      if (ADMIN.includes(session.role) && (!(await data.getLocal('syncSeeded', false)) || !(await data.getLocal('syncV2', false)))) {
+         sent before version 2.5 are sent again once, now saying whose they are and whether
+         they belong to an adult. */
+      if (ADMIN.includes(session.role) && (!(await data.getLocal('syncSeeded', false)) || !(await data.getLocal('syncV3', false)))) {
         for (const [store, rec] of await data.allSynced()) await data.outbox.add(store, rec);
         await data.setLocal('syncSeeded', true);
         await data.setLocal('syncV2', true);
+        await data.setLocal('syncV3', true);
       }
       await recount();
       await listen();

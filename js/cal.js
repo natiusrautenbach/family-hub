@@ -120,11 +120,11 @@
     for (const a of src.activities) {
       const st = activityOn(a, s, src.sc);
       if (!st || st === 'holiday') continue;
-      out.push({ kind: 'act', id: a.id, child: a.owner, date: s, time: a.start || '', end: a.end || '', title: a.title, cat: 'Activity', subject: '', detail: a.place || '', skipped: st === 'skipped' });
+      out.push({ kind: 'act', id: a.id, group: a.group || '', child: a.owner, date: s, time: a.start || '', end: a.end || '', title: a.title, cat: 'Activity', subject: '', detail: a.place || '', skipped: st === 'skipped' });
     }
     for (const r of src.reminders) {
       if (!reminderOn(r, s)) continue;
-      out.push({ kind: 'rem', id: r.id, child: r.owner, date: s, time: r.time || '', end: '', title: r.title, cat: 'Reminder', subject: '', detail: r.repeat && r.repeat !== 'none' ? REPEATS.find(x => x[0] === r.repeat)[1] : '', skipped: false });
+      out.push({ kind: 'rem', id: r.id, group: r.group || '', child: r.owner, date: s, time: r.time || '', end: '', title: r.title, cat: 'Reminder', subject: '', detail: r.repeat && r.repeat !== 'none' ? REPEATS.find(x => x[0] === r.repeat)[1] : '', skipped: false });
     }
     /* Tasks show on their due date with their undated steps; a step with its own date shows on that day. */
     for (const t of src.tasks || []) {
@@ -140,8 +140,20 @@
     for (const x of src.sessions || []) {
       if (x.date === s) out.push({ kind: 'study', id: x.id, child: x.owner, date: s, time: x.time || '', end: x.time && x.mins ? addMin(x.time, x.mins) : '', title: x.subject, cat: 'Study', subject: '', detail: `${x.label}${x.mins ? `, ${x.mins} min` : ''}`, done: !!x.done, skipped: false });
     }
-    return out
-      .filter(e => !o.visible || o.visible.has(e.child))
+    /* An activity or reminder for several people is stored once per person with a shared
+       group id; it shows as one item listing everyone in it. */
+    const merged = [], byGroup = new Map();
+    for (const e of out) {
+      e.people = [e.child];
+      if (e.group) {
+        const k = e.kind + '|' + e.group, m = byGroup.get(k);
+        if (m) { m.people.push(e.child); m.skipped = m.skipped && e.skipped; continue; }
+        byGroup.set(k, e);
+      }
+      merged.push(e);
+    }
+    return merged
+      .filter(e => !o.visible || e.people.some(p => o.visible.has(p)))
       .filter(e => !o.kinds || o.kinds.has(GROUP[e.kind]))
       .sort((x, y) => (x.time || '99:99').localeCompare(y.time || '99:99') || x.title.localeCompare(y.title));
   }

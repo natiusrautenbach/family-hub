@@ -142,6 +142,23 @@ await expectDenied('child cannot read a sibling\'s task', () => getDoc(recRef(K,
 await expectDenied('child cannot read a sibling\'s activities unless allowed', () => getDoc(recRef(K, 'activities', 'aB')));
 await expectOk('owner allows siblings\' activities and money', () => updateDoc(doc(A.db, 'families', fa.fid, 'members', K.uid), { siblings: true, money: true }));
 await expectOk('child now reads a sibling\'s activity', () => getDoc(recRef(K, 'activities', 'aB')));
+// 2.5: parents are people too. A parent's own items are marked adult and never reach a child's brothers and sisters.
+await expectOk('parent saves a parent person and their own activity', async () => {
+  await setDoc(recRef(A, 'people', 'mum'), rec('people', 'mum', 'mum', T, { adult: true }));
+  await setDoc(recRef(A, 'activities', 'aMum'), rec('activities', 'aMum', 'mum', T, { adult: true }));
+  await setDoc(recRef(A, 'reminders', 'rMum'), rec('reminders', 'rMum', 'mum', T, { adult: true }));
+  await setDoc(recRef(A, 'activities', 'aB2'), rec('activities', 'aB2', 'kidB', T, { adult: false }));
+});
+await expectDenied('the adult mark must be true or false', () => setDoc(recRef(A, 'activities', 'aBad'), rec('activities', 'aBad', 'mum', T, { adult: 'yes' })));
+await expectDenied('child cannot read a parent\'s own activity, even with siblings allowed', () => getDoc(recRef(K, 'activities', 'aMum')));
+await expectDenied('child cannot read the parent person', () => getDoc(recRef(K, 'people', 'mum')));
+await expectDenied('child cannot read a parent\'s own reminder', () => getDoc(recRef(K, 'reminders', 'rMum')));
+await expectOk('child\'s sibling query (not adult) returns siblings\' activities only', () => getDocs(query(collection(K.db, 'families', fa.fid, 'records'), where('adult', '==', false), where('store', 'in', ['people', 'activities']))).then(q => {
+  if (!q.docs.some(d => d.id === 'activities~aB2')) throw new Error('missing sibling activity');
+  if (q.docs.some(d => d.id === 'activities~aMum')) throw new Error('parent item leaked');
+}));
+await expectDenied('child\'s sibling query without the adult filter is refused', () => getDocs(query(collection(K.db, 'families', fa.fid, 'records'), where('store', 'in', ['people', 'activities']))));
+await expectDenied('carer cannot read a parent\'s own activity', () => getDoc(recRef(C, 'activities', 'aMum')));
 await expectOk('child now reads their own money', () => getDoc(recRef(K, 'accounts', 'mA')));
 await expectDenied('child still cannot read a sibling\'s task', () => getDoc(recRef(K, 'tasks', 'tB')));
 await expectOk('limited child ticks off own task', () => setDoc(recRef(K, 'tasks', 'tA'), rec('tasks', 'tA', 'kidA', '2026-11-15T12:00:00.000Z')));

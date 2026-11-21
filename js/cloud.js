@@ -69,6 +69,8 @@
   /* Records: whose they are and whether they are money, so the server can share each
      one only with the people allowed to see it. */
   const MONEY = ['accounts', 'entries', 'goals', 'ledger', 'chores', 'rewards'];
+  /* An adult's own items (and the adult themselves) are never shown to a child's brothers and sisters. */
+  const recAdult = (store, rec) => store === 'people' ? rec.type === 'adult' : !!rec.adult;
   const recOwner = (store, rec) => store === 'people' ? rec.id : ['terms', 'daysoff'].includes(store) ? '_family' : (rec.owner || '_none');
   /* Family usernames sign in with an address the app makes up; nobody ever sees it. */
   const loginKey = (code, username) => `${String(code || '').toUpperCase()}-${String(username || '').toLowerCase()}`;
@@ -192,7 +194,7 @@
       pushRecord(fid, store, rec) {
         if (!db) return Promise.reject(fail('sdk-unavailable'));
         return F.setDoc(F.doc(db, 'families', fid, 'records', store + '~' + rec.id), {
-          store, id: rec.id, owner: recOwner(store, rec), money: MONEY.includes(store), updatedAt: rec.updatedAt || '', by: rec.updatedBy || '', deleted: !!rec.deleted,
+          store, id: rec.id, owner: recOwner(store, rec), money: MONEY.includes(store), adult: recAdult(store, rec), updatedAt: rec.updatedAt || '', by: rec.updatedBy || '', deleted: !!rec.deleted,
           json: JSON.stringify(rec), syncAt: F.serverTimestamp(),
         });
       },
@@ -211,7 +213,7 @@
         } else if (r === 'child_view' || r === 'child_limited') {
           const own = [W('owner', 'in', [who.personId || '_none', '_family'])];
           parts.push(who.money === false ? [W('money', '==', false), ...own] : own);
-          if (who.siblings) parts.push([W('store', 'in', ['people', 'activities'])]);
+          if (who.siblings) parts.push([W('adult', '==', false), W('store', 'in', ['people', 'activities'])]);
         }
         const unsubs = parts.map(p => F.onSnapshot(p.length || since.length ? F.query(col, ...p, ...since) : col, snapHandler, onError));
         return () => unsubs.forEach(u => u());

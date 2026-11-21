@@ -8,9 +8,9 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '2.4.0';
+  const VERSION = '2.5.0';
   const MILESTONE = 7;
-  const PHASE2 = '2.4'; // Phase 2 milestone in this build
+  const PHASE2 = '2.5'; // Phase 2 milestone in this build
   /* Who is using the app decides what it offers (the server decides what they receive). */
   const isAdmin = () => !S.session || ['owner', 'parent'].includes(S.session.role);
   const isChild = () => !!S.session && ['child_view', 'child_limited'].includes(S.session.role);
@@ -29,7 +29,7 @@
     'chore-mark', 'chore-occ', 'day-add', 'day-edit', 'day-toggle', 'do-restore', 'entry-add', 'entry-edit', 'ev-edit', 'ev-skip', 'exam-add', 'exam-edit', 'export-copy', 'export-file',
     'go-restore', 'goal-add', 'goal-down', 'goal-edit', 'goal-reach', 'goal-reopen', 'goal-up', 'imp-start', 'led-add', 'led-edit', 'led-settle', 'period-add', 'period-edit', 'plan-build',
     'plan-rebuild', 'rec-del', 'reward-add', 'reward-approve', 'reward-edit', 'reward-minus', 'reward-plus', 'sess-add', 'sess-done', 'sess-edit', 'step-add', 'step-done', 'step-rm',
-    'task-done', 'task-edit', 'term-add', 'term-edit', 'terms-reset', 'use-official'];
+    'task-done', 'task-edit', 'term-add', 'term-edit', 'terms-reset', 'use-official', 'who', 'who-all'];
   const mayTap = a => isAdmin() || VIEW_ACTS.includes(a) || (ROLE_ACTS[S.session.role] || []).includes(a);
   /* Hides the buttons this person can't use, so they never meet a refusal. */
   function roleStyle() {
@@ -88,7 +88,8 @@
     backupText: '',
     /* milestone 2 */
     activities: [], reminders: [], terms: [], daysoff: [], sc: null,
-    hidden: new Set(),                      // children switched off on the calendar
+    people: [], adults: [],                 // everyone on the calendar: children, then parents
+    hidden: new Set(),                      // people switched off on the calendar
     kinds: new Set(['act', 'rem', 'task', 'study']), // item types shown on the calendar
     tasks: [], taskFilter: 'open', openTask: null,
     periods: [], exams: [], sessions: [], study: { period: null, tab: 'exams', imp: null },
@@ -103,10 +104,29 @@
     if (saved) { if (saved.mode) S.cal.mode = saved.mode; if (Array.isArray(saved.kinds)) { S.kinds = new Set(saved.kinds.filter(k => KINDS.some(x => x[0] === k))); for (const [k] of KINDS) if (!(saved.seen || ['act', 'rem']).includes(k)) S.kinds.add(k); } if (Array.isArray(saved.hidden)) S.hidden = new Set(saved.hidden); }
   } catch (e) { /* storage not available: use defaults */ }
   function saveCalPrefs() { try { localStorage.setItem('fh-cal', JSON.stringify({ mode: S.cal.mode, kinds: [...S.kinds], hidden: [...S.hidden], seen: KINDS.map(x => x[0]) })); } catch (e) { /* ignore */ } }
-  const visibleSet = () => new Set(S.children.filter(c => !S.hidden.has(c.id)).map(c => c.id));
-  const kidOf = id => S.children.find(c => c.id === id);
+  const visibleSet = () => new Set(S.people.filter(c => !S.hidden.has(c.id)).map(c => c.id));
+  const kidOf = id => S.people.find(c => c.id === id);
   const colOf = id => kidOf(id)?.colour || 'c1';
   const nameOf = id => kidOf(id)?.name || '';
+  const isAdultId = id => S.adults.some(p => p.id === id);
+  /* People on a shared item, in the family's order (children first, then parents). */
+  const inOrder = ids => { const known = S.people.filter(p => ids.includes(p.id)).map(p => p.id); return known.length ? known : ids.slice(0, 1); };
+  const namesOf = ids => {
+    const ps = S.people.filter(p => ids.includes(p.id));
+    if (ps.length > 2 && ps.length === S.people.length) return 'Everyone';
+    const n = ps.map(p => p.name);
+    return n.length <= 1 ? (n[0] || nameOf(ids[0])) : `${n.slice(0, -1).join(', ')} & ${n[n.length - 1]}`;
+  };
+  /* A colour bar split between everyone on a shared item. */
+  const barStyle = ids => {
+    const cs = inOrder(ids).map(id => `var(--${colOf(id)})`);
+    if (cs.length < 2) return '';
+    const w = 100 / cs.length;
+    return ` style="background:linear-gradient(${cs.map((c, i) => `${c} ${(i * w).toFixed(1)}% ${((i + 1) * w).toFixed(1)}%`).join(',')})"`;
+  };
+  const evPeople = e => inOrder(e.people || [e.child]);
+  const newGroup = () => 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const groupOf = (list, rec) => rec.group ? list.filter(x => x.group === rec.group) : [rec];
 
   /* ---------- Icons ---------- */
   const IC = {
@@ -128,12 +148,17 @@
   /* ---------- Loading ---------- */
   async function load() {
     S.parent = data.user;
-    S.children = (await data.list('people', p => p.type === 'child')).sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name));
+    const everyone = await data.list('people');
+    const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name);
+    S.children = everyone.filter(p => p.type === 'child').sort(byOrder);
+    S.adults = everyone.filter(p => p.type === 'adult').sort(byOrder);
+    S.people = [...S.children, ...S.adults];
     S.family = await data.getSetting('familyName', '');
     S.setupDone = await data.getSetting('setupDone', false);
     const kids = new Set(S.children.map(c => c.id));
-    S.activities = (await data.list('activities')).filter(a => kids.has(a.owner));
-    S.reminders = (await data.list('reminders')).filter(r => kids.has(r.owner));
+    const ppl = new Set(S.people.map(c => c.id));
+    S.activities = (await data.list('activities')).filter(a => ppl.has(a.owner));
+    S.reminders = (await data.list('reminders')).filter(r => ppl.has(r.owner));
     S.tasks = (await data.list('tasks')).filter(t => kids.has(t.owner));
     S.periods = (await data.list('periods')).filter(p => kids.has(p.owner));
     const pids = new Set(S.periods.map(p => p.id));
@@ -312,7 +337,8 @@
       ${nl ? `<div class="invbox" id="new-login"><b class="small">${esc(nl.name)} can now sign in</b>
           <p class="small">On the sign-in screen, tap <b>Family username</b> and enter:</p>
           <div class="kv"><span>Family code</span><b class="code">${esc(s.familyCode || '')}</b><span>Username</span><b>${esc(nl.username)}</b><span>Password</span><b>the one you chose</b></div>
-          <p class="hint">Write these down for ${esc(nl.name)}. The password isn't shown again; you can set a new one under Edit.</p></div>` : ''}
+          <p class="hint">Write these down for ${esc(nl.name)}. The password isn't shown again; you can set a new one under Edit.</p>
+          <p class="flbl" style="margin-top:10px">Send ${esc(nl.name)} a sign-in link</p>${signinShare(nl.name, nl.username)}</div>` : ''}
       ${ni ? `<div class="invbox" id="new-invite"><b class="small">Invite link</b>
           <input id="inv-link" readonly value="${esc(inviteLink(ni.token))}" aria-label="Invite link">
           <div class="row"><button class="btn sm pri" data-act="inv-copy">Copy link</button>${navigator.share ? '<button class="btn sm" data-act="inv-share">Share…</button>' : ''}</div>
@@ -321,6 +347,16 @@
     </section>`;
   }
   const isChildRole = r => r === 'child_view' || r === 'child_limited';
+  /* A link that installs the app and opens Family sign-in with the family code and username
+     filled in. The message never includes the password. */
+  const signinLink = username => `${location.origin}${location.pathname}?u=${encodeURIComponent(`${S.session.familyCode || ''}.${username}`)}`;
+  const signinMsg = (name, username) => `Hi ${name}! Here's your link to Herding Cats, our family calendar. Open it, install the app, then sign in:\n${signinLink(username)}\n\nFamily code: ${S.session.familyCode || ''}\nUsername: ${username}\nI'll give you your password myself.`;
+  function signinShare(name, username) {
+    const msg = encodeURIComponent(signinMsg(name, username));
+    return `<input id="login-link" readonly value="${esc(signinLink(username))}" aria-label="Sign-in link for ${esc(name)}">
+      <div class="row" style="gap:6px"><a class="btn sm pri" href="https://wa.me/?text=${msg}" target="_blank" rel="noopener">WhatsApp</a><a class="btn sm" href="sms:?&body=${msg}">SMS</a>${navigator.share ? `<button type="button" class="btn sm" data-act="login-share" data-v="${esc(username)}" data-n="${esc(name)}">Share…</button>` : ''}<button type="button" class="btn sm" data-act="login-copy" data-v="${esc(username)}" data-n="${esc(name)}">Copy message</button></div>
+      <p class="hint">The link installs the app and fills in the family code and username. Give ${esc(name)} the password yourself: it's never in the link.</p>`;
+  }
 
   /* Form: approve someone, or change what a person sees. */
   function memberSheet() {
@@ -339,6 +375,7 @@
       ${isChildRole(role) ? `<label class="full">Which child is this?<select id="f-person"><option value="">Choose…</option>${S.children.map(c => `<option value="${c.id}" ${(sh.personId ?? m.personId) === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
         <label class="check full"><input type="checkbox" id="f-sibs" ${(sh.siblings ?? m.siblings) ? 'checked' : ''}><span>Sees brothers' and sisters' activities (not their tasks, study or money)</span></label>
         <label class="check full"><input type="checkbox" id="f-money" ${(sh.money ?? m.money) !== false ? 'checked' : ''}><span>Sees their own money: balances, goals and chores</span></label>` : ''}
+      ${m.username && !approving ? `<div class="full invbox" style="margin:0"><b class="small">Sign-in link for ${esc(m.name)}</b>${signinShare(m.name, m.username)}</div>` : ''}
       ${m.username && !approving ? `<label class="full">New password (only to replace a forgotten one)<input id="f-newpass" type="text" autocomplete="new-password" placeholder="At least 8 characters"></label>` : ''}
       <div class="err full" id="f-err" role="alert"></div>
       <div class="actions full">
@@ -502,10 +539,11 @@
   const ctag = e => `<span class="ctag">${esc(e.cat || KLABEL[e.kind] || '')}${e.subject ? ' · ' + esc(e.subject) : ''}</span>`;
   const stepList = e => e.steps && e.steps.length ? `<span class="evsteps">${e.steps.map(st => `<span class="${st.done || e.done ? 'struck' : ''}">${esc(st.text)}</span>`).join('')}</span>` : '';
   function evRow(e, showDate) {
-    return `<button class="ev evb" style="--c:var(--${colOf(e.child)})" data-act="ev" data-v="${e.kind}|${e.id}|${e.date}">
+    const ps = evPeople(e);
+    return `<button class="ev evb" style="--c:var(--${colOf(ps[0])})" data-act="ev" data-v="${e.kind}|${e.id}|${e.date}">
       <span class="t">${showDate ? `${C.DOW[C.dow(e.date)]}<small>${C.toD(e.date).getDate()} ${C.MON[C.toD(e.date).getMonth()]}</small>` : `${e.time || (e.kind === 'task' || e.kind === 'step' ? 'Due' : 'All day')}${e.end ? `<small>${e.end}</small>` : ''}`}</span>
-      <span class="bar"></span>
-      <span class="min0"><span class="ti ${e.skipped || e.done ? 'struck' : ''}">${esc(e.title)}</span><span class="sub">${ctag(e)} ${esc(nameOf(e.child))}${e.skipped ? ' · skipped this time' : `${showDate && e.time ? ' · ' + e.time : ''}${e.detail ? ' · ' + esc(e.detail) : ''}${e.done ? ' · done' : ''}`}</span>${stepList(e)}</span></button>`;
+      <span class="bar"${barStyle(ps)}></span>
+      <span class="min0"><span class="ti ${e.skipped || e.done ? 'struck' : ''}">${esc(e.title)}</span><span class="sub">${ctag(e)} ${esc(namesOf(ps))}${e.skipped ? ' · skipped this time' : `${showDate && e.time ? ' · ' + e.time : ''}${e.detail ? ' · ' + esc(e.detail) : ''}${e.done ? ' · done' : ''}`}</span>${stepList(e)}</span></button>`;
   }
   function schoolLine(s) {
     const sc = S.sc; if (!sc) return '';
@@ -522,8 +560,9 @@
 
   function vToday() {
     const s = C.today();
-    const all = new Set(S.children.map(c => c.id));
+    const all = new Set(S.people.map(c => c.id));
     const ev = C.eventsOn(s, src(), { visible: all });
+    const kidsOn = new Set(ev.filter(e => !e.skipped).flatMap(e => e.people).filter(id => S.children.some(c => c.id === id))).size;
     const live = ev.filter(e => !e.skipped);
     const soon = [];
     for (let i = 1; i <= 7; i++) soon.push(...C.eventsOn(C.addDays(s, i), src(), { visible: all, kinds: new Set(['rem']) }));
@@ -531,7 +570,7 @@
     const t = S.sc?.termOf(s);
     const nt = !t && S.sc?.covered(s) ? S.sc.nextTerm(s) : null;
     const digest = !S.children.length ? 'Add your children to get started.'
-      : `<b>${live.length ? `${live.length} ${live.length === 1 ? 'thing' : 'things'} on today` : 'Nothing planned today'}</b>${live.length && S.children.length > 1 ? ` across ${new Set(live.map(e => e.child)).size} ${new Set(live.map(e => e.child)).size === 1 ? 'child' : 'children'}` : ''}. `
+      : `<b>${live.length ? `${live.length} ${live.length === 1 ? 'thing' : 'things'} on today` : 'Nothing planned today'}</b>${live.length && S.children.length > 1 && kidsOn ? ` across ${kidsOn} ${kidsOn === 1 ? 'child' : 'children'}` : ''}. `
         + (soon.length ? `${soon.length} reminder${soon.length === 1 ? '' : 's'} in the next week. ` : '')
         + (overdueN ? `<b class="overdue">${overdueN} overdue task${overdueN === 1 ? '' : 's'}</b>. ` : '')
         + (t ? `School closes ${C.fmtDay(t.end)} (${C.rel(C.diffDays(s, t.end))}).` : nt ? `School opens ${C.fmtDay(nt.start)} (${C.rel(C.diffDays(s, nt.start))}).` : '');
@@ -1564,10 +1603,10 @@
 
   /* ---------- Calendar ---------- */
   function toggles() {
-    const allOn = S.children.every(c => !S.hidden.has(c.id));
-    return `<div class="toggles" role="group" aria-label="Show children">
+    const allOn = S.people.every(c => !S.hidden.has(c.id));
+    return `<div class="toggles" role="group" aria-label="Show people">
       <button class="tg" style="--c:var(--all)" data-act="vis" data-v="all" aria-pressed="${allOn}"><span class="dot"></span>All</button>
-      ${S.children.map(c => `<button class="tg" style="--c:var(--${c.colour})" data-act="vis" data-v="${c.id}" aria-pressed="${!S.hidden.has(c.id)}"><span class="dot"></span>${esc(c.name)}</button>`).join('')}
+      ${S.people.map(c => `<button class="tg" style="--c:var(--${c.colour})" data-act="vis" data-v="${c.id}" aria-pressed="${!S.hidden.has(c.id)}"><span class="dot"></span>${esc(c.name)}</button>`).join('')}
     </div>`;
   }
   function kindToggles() {
@@ -1592,7 +1631,7 @@
         const lbl = S.sc.offLabel(d);
         return `<div class="day${d === C.today() ? ' today' : ''}${lbl ? ' off' : ''}">
           <div class="dayh"><b>${C.DOW[C.dow(d)]} ${C.toD(d).getDate()}</b>${lbl ? `<span class="offlbl">${esc(lbl)}</span>` : ''}</div>
-          ${ev.length ? ev.map(e => `<button class="mini minib" style="--c:var(--${colOf(e.child)})" data-act="ev" data-v="${e.kind}|${e.id}|${e.date}"><span class="bar"></span><span class="min0"><span class="tm">${e.time || (e.kind === 'task' || e.kind === 'step' ? (e.kind === 'task' ? 'Due' : 'Step') : 'All day')}${e.end ? '–' + e.end : ''}</span><span class="${e.skipped || e.done ? 'struck' : ''}">${esc(e.title)}</span><span class="sb">${ctag(e)} ${esc(nameOf(e.child))}${e.skipped ? ' · skipped' : e.detail ? ' · ' + esc(e.detail) : ''}</span>${stepList(e)}</span></button>`).join('') : '<p class="empty" style="font-size:13px">Nothing planned</p>'}
+          ${ev.length ? ev.map(e => `<button class="mini minib" style="--c:var(--${colOf(evPeople(e)[0])})" data-act="ev" data-v="${e.kind}|${e.id}|${e.date}"><span class="bar"${barStyle(evPeople(e))}></span><span class="min0"><span class="tm">${e.time || (e.kind === 'task' || e.kind === 'step' ? (e.kind === 'task' ? 'Due' : 'Step') : 'All day')}${e.end ? '–' + e.end : ''}</span><span class="${e.skipped || e.done ? 'struck' : ''}">${esc(e.title)}</span><span class="sb">${ctag(e)} ${esc(namesOf(evPeople(e)))}${e.skipped ? ' · skipped' : e.detail ? ' · ' + esc(e.detail) : ''}</span>${stepList(e)}</span></button>`).join('') : '<p class="empty" style="font-size:13px">Nothing planned</p>'}
         </div>`;
       }).join('')}</div>`;
     } else {
@@ -1612,8 +1651,8 @@
           return `<button class="mc${out ? ' out' : ''}${lbl ? ' off' : ''}${d === C.today() ? ' today' : ''}" data-act="selday" data-v="${d}" aria-pressed="${d === c.sel}" aria-label="${C.fmtLong(d)}, ${ev.length} ${ev.length === 1 ? 'item' : 'items'}${lbl ? ', ' + esc(lbl) : ''}">
             <span class="n">${C.toD(d).getDate()}</span>
             ${showLbl ? `<span class="mlbl">${esc(lbl)}</span>` : ''}
-            <span class="dots">${ev.slice(0, 6).map(e => `<i style="--c:var(--${colOf(e.child)})"></i>`).join('')}</span>
-            ${ev.slice(0, 3).map(e => `<span class="mtxt" style="--c:var(--${colOf(e.child)})" title="${esc((e.cat || '') + (e.subject ? ' · ' + e.subject : '') + ': ' + e.title)}"><span class="mcat">${esc(e.cat || '')}</span> ${e.time ? e.time + ' ' : ''}${esc(e.title)}</span>`).join('')}
+            <span class="dots">${ev.flatMap(e => evPeople(e)).slice(0, 6).map(id => `<i style="--c:var(--${colOf(id)})"></i>`).join('')}</span>
+            ${ev.slice(0, 3).map(e => `<span class="mtxt" style="--c:var(--${colOf(evPeople(e)[0])})" title="${esc((e.cat || '') + (e.subject ? ' · ' + e.subject : '') + ': ' + e.title)}"><span class="mcat">${esc(e.cat || '')}</span> ${e.time ? e.time + ' ' : ''}${esc(e.title)}</span>`).join('')}
             ${ev.length > 3 ? `<span class="more mtxt" style="border:0;padding:0">+${ev.length - 3} more</span>` : ''}
           </button>`;
         }).join('')}</div>
@@ -1663,6 +1702,11 @@
         ${S.children.map(c => `<div class="set"><span class="row" style="flex-wrap:nowrap">${avatar(c)}<span class="min0"><b>${esc(c.name)}</b> <span class="muted">· ${esc(c.grade || '')}</span></span></span><button class="btn sm" data-act="child-edit" data-v="${c.id}">Edit</button></div>`).join('') || '<p class="empty">No children yet.</p>'}
       </section>
 
+      ${S.adults.length ? `<section class="card" id="parents-card"><div class="card-h"><h3>Parents</h3></div>
+        <p class="meta" style="margin-bottom:8px">Parents have their own colour on the calendar. A parent's own activities and reminders are only seen by parents.</p>
+        ${S.adults.map(c => `<div class="set"><span class="row" style="flex-wrap:nowrap">${avatar(c)}<span class="min0"><b>${esc(c.name)}</b>${c.uid === S.session?.uid ? ' <span class="muted">· you</span>' : ''}</span></span><button class="btn sm" data-act="child-edit" data-v="${c.id}">Edit</button></div>`).join('')}
+      </section>` : ''}
+
       ${termsCard()}
 
       <section class="card"><div class="card-h"><h3>Family</h3></div>
@@ -1690,10 +1734,8 @@
 
       <section class="card"><div class="card-h"><h3>Install the app</h3>${installed ? '<span class="pill on">Installed</span>' : ''}</div>
         ${installed ? '<p class="small">Herding Cats is installed and works without internet.</p>'
-          : inFrame ? '<p class="small">Installing works once Herding Cats is on its own web address (GitHub Pages). This test link can\'t be installed.</p>'
-          : S.installEvt ? '<p class="small">Add Herding Cats to this device so it opens like an app and works without internet.</p><div class="row" style="margin-top:10px"><button class="btn sm pri" data-act="install">Install Herding Cats</button></div>'
-          : ios ? '<p class="small">In Safari, tap the Share button, then <b>Add to Home Screen</b>.</p>'
-          : '<p class="small">In your browser menu, choose <b>Install app</b> or <b>Add to Home screen</b>.</p>'}
+          : inFrame ? '<p class="small">This test link can\'t be installed. Open Herding Cats on its own web address to install it.</p>'
+          : `<p class="small">Add Herding Cats to this device so it opens like an app and works without internet.</p><div class="row" style="margin-top:10px"><button class="btn sm pri" data-install="go">Install app</button></div>${ios ? '<p class="hint">On iPhone: Share › Add to Home Screen. The button shows you how.</p>' : ''}`}
       </section>
 
       ${signInCard()}
@@ -1713,19 +1755,20 @@
   /* ---------- Sheets ---------- */
   function childSheet() {
     const sh = S.sheet;
-    const c = sh.id ? S.children.find(x => x.id === sh.id) : null;
-    const used = new Set(S.children.filter(x => x.id !== sh.id).map(x => x.colour));
+    const c = sh.id ? S.people.find(x => x.id === sh.id) : null;
+    const adult = c?.type === 'adult';
+    const used = new Set(S.people.filter(x => x.id !== sh.id).map(x => x.colour));
     const colour = sh.colour || c?.colour || (COLOURS.find(([k]) => !used.has(k)) || COLOURS[0])[0];
     sh.colour = colour;
     return `<div class="scrim" data-act="close-bg"><div class="panel" role="dialog" aria-modal="true" aria-labelledby="sh-h">
       <h2 id="sh-h">${c ? `Edit ${esc(c.name)}` : 'Add a child'}</h2>
       <form class="form" data-form="child" style="margin-top:14px">
         <label class="full">First name<input id="f-name" value="${esc(c?.name || '')}" placeholder="e.g. Mia" autocomplete="off" required></label>
-        <label>Grade<select id="f-grade">${GRADES.map(g => `<option ${g === (c?.grade || 'Grade 1') ? 'selected' : ''}>${g}</option>`).join('')}</select></label>
+        ${adult ? '' : `<label>Grade<select id="f-grade">${GRADES.map(g => `<option ${g === (c?.grade || 'Grade 1') ? 'selected' : ''}>${g}</option>`).join('')}</select></label>`}
         <label>Colour<span class="swatches" role="radiogroup" aria-label="Colour">${COLOURS.map(([k, n]) => `<button type="button" class="sw" role="radio" aria-checked="${k === colour}" aria-label="${n}${used.has(k) ? ' (used)' : ''}" title="${n}${used.has(k) ? ' (used)' : ''}" data-act="sh-col" data-v="${k}" style="--c:var(--${k})"></button>`).join('')}</span></label>
-        ${used.has(colour) ? `<p class="hint full">Another child already uses ${colName(colour)}. Different colours make the calendar easier to read.</p>` : ''}
+        ${used.has(colour) ? `<p class="hint full">Someone else already uses ${colName(colour)}. Different colours make the calendar easier to read.</p>` : ''}
         <div class="err full" id="f-err" role="alert"></div>
-        <div class="actions full">${c ? `<button type="button" class="btn del${sh.confirm ? ' armed' : ''}" data-act="child-del">${sh.confirm ? `Tap again to remove ${esc(c.name)}` : 'Remove'}</button>` : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${c ? 'Save' : 'Add'}</button></div>
+        <div class="actions full">${c && !adult ? `<button type="button" class="btn del${sh.confirm ? ' armed' : ''}" data-act="child-del">${sh.confirm ? `Tap again to remove ${esc(c.name)}` : 'Remove'}</button>` : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${c ? 'Save' : 'Add'}</button></div>
       </form>
     </div></div>`;
   }
@@ -1754,6 +1797,20 @@
   /* ---------- Milestone 2 sheets ---------- */
   const panel = (title, inner) => `<div class="scrim" data-act="close-bg"><div class="panel" role="dialog" aria-modal="true" aria-labelledby="sh-h"><h2 id="sh-h">${title}</h2>${inner}</div></div>`;
   const childSelect = sel => `<label>Child<select id="f-child">${S.children.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`;
+  /* Who an activity or reminder is for: tick one or more people, or Everyone.
+     A new item starts with just one child ticked, since most things are for one person. */
+  const whoDefault = sh => sh.who && sh.who.length ? sh.who : [sh.child || S.children[0]?.id || S.people[0]?.id].filter(Boolean);
+  function whoPicker(sh, rec, list, what) {
+    const grp = rec ? groupOf(list, rec) : [];
+    const ticked = new Set(rec ? grp.map(x => x.owner) : whoDefault(sh));
+    const all = S.people.length > 1 && S.people.every(p => ticked.has(p.id));
+    return `<div class="full fieldset"><span class="flbl">For</span><div class="who" role="group" aria-label="Who this is for">
+        ${S.people.length > 1 ? `<label class="chk whoall"><input type="checkbox" id="f-who-all" data-act="who-all" ${all ? 'checked' : ''}><b>Everyone</b></label>` : ''}
+        ${S.people.map(p => `<label class="chk" style="--c:var(--${esc(p.colour)})"><input type="checkbox" class="f-who" data-act="who" value="${p.id}" ${ticked.has(p.id) ? 'checked' : ''}><span class="dot"></span>${esc(p.name)}${p.type === 'adult' ? ' <span class="muted">· parent</span>' : ''}</label>`).join('')}
+      </div></div>
+      ${grp.length > 1 ? `<label class="full">Apply changes to<select id="f-scope"><option value="all">Everyone on this ${what}</option>${inOrder(grp.map(x => x.owner)).map(id => `<option value="${id}">Only ${esc(nameOf(id))}</option>`).join('')}</select></label>` : ''}`;
+  }
+  const whoTicked = () => [...document.querySelectorAll('.f-who:checked')].map(i => i.value);
   const delBtn = (sh, what) => `<button type="button" class="btn del${sh.confirm ? ' armed' : ''}" data-act="rec-del">${sh.confirm ? `Tap again to delete ${what}` : 'Delete'}</button>`;
   const typePills = cur => `<div class="types" role="group" aria-label="What to add">${[['task', 'Homework or project'], ['activity', 'Weekly activity'], ['reminder', 'Reminder']].filter(([k]) => isAdmin() || k === 'task').map(([k, l]) => `<button type="button" data-act="add-type" data-v="${k}" aria-pressed="${k === cur}">${l}</button>`).join('')}</div>`;
   const defaultDate = () => (S.view === 'calendar' ? (S.cal.mode === 'month' ? S.cal.sel : (S.cal.cursor >= C.today() ? S.cal.cursor : C.today())) : C.today());
@@ -1764,7 +1821,7 @@
     const days = a ? a.weekdays : [C.dow(defaultDate())];
     return panel(a ? `Edit ${esc(a.title)}` : 'Add', `${a ? '' : typePills('activity')}
       <form class="form" data-form="activity" style="margin-top:${a ? 14 : 0}px">
-        ${childSelect(a ? a.owner : sh.child)}
+        ${whoPicker(sh, a, S.activities, 'activity')}
         <label>Activity<input id="f-title" value="${esc(a?.title || '')}" placeholder="e.g. Hockey practice" autocomplete="off"></label>
         <div class="full fieldset"><span class="flbl">Days</span><div class="daychips" role="group" aria-label="Days">${WEEK_ORDER.map(d => `<button type="button" class="dchip" data-act="day-toggle" data-day="${d}" aria-pressed="${days.includes(d)}">${C.DOW[d]}</button>`).join('')}</div></div>
         <label>Starts<input id="f-start" type="time" value="${a?.start || '15:00'}"></label>
@@ -1783,7 +1840,7 @@
     const r = sh.id ? S.reminders.find(x => x.id === sh.id) : null;
     return panel(r ? `Edit ${esc(r.title)}` : 'Add', `${r ? '' : typePills('reminder')}
       <form class="form" data-form="reminder" style="margin-top:${r ? 14 : 0}px">
-        ${childSelect(r ? r.owner : sh.child)}
+        ${whoPicker(sh, r, S.reminders, 'reminder')}
         <label>Reminder<input id="f-title" value="${esc(r?.title || '')}" placeholder="e.g. Return permission slip" autocomplete="off"></label>
         <label>Date<input id="f-date" type="date" value="${r?.date || defaultDate()}"></label>
         <label>Time (optional)<input id="f-time" type="time" value="${r?.time || ''}"></label>
@@ -1800,10 +1857,11 @@
     const rec = isAct ? S.activities.find(x => x.id === sh.id) : S.reminders.find(x => x.id === sh.id);
     if (!rec) return panel('Not found', '<p class="small" style="margin:12px 0">This item was removed.</p><div class="actions"><button class="btn" data-act="close">Close</button></div>');
     const skipped = (rec.skips || []).includes(sh.date);
+    const ps = inOrder(groupOf(isAct ? S.activities : S.reminders, rec).map(x => x.owner));
     const repeating = isAct || (rec.repeat && rec.repeat !== 'none');
     const info = isAct ? actSummary(rec) : `${C.fmtDay(rec.date)}${rec.time ? ' at ' + rec.time : ''} · ${C.REPEATS.find(x => x[0] === (rec.repeat || 'none'))[1]}${rec.until ? ` until ${C.fmtDate(rec.until)}` : ''}`;
     return panel(esc(rec.title), `
-      <div class="evhead" style="--c:var(--${colOf(rec.owner)})">${avatar(kidOf(rec.owner) || { name: '?', colour: 'c1' })}<span class="min0"><b>${esc(nameOf(rec.owner))}</b> · ${KLABEL[sh.ekind]}<span class="meta" style="display:block">${info}</span></span></div>
+      <div class="evhead" style="--c:var(--${colOf(ps[0])})"><span class="avs">${ps.map(id => avatar(kidOf(id) || { name: '?', colour: 'c1' })).join('')}</span><span class="min0"><b>${esc(namesOf(ps))}</b> · ${KLABEL[sh.ekind]}<span class="meta" style="display:block">${info}</span></span></div>
       <div class="card sunk" style="margin:12px 0"><b>${C.fmtLong(sh.date)}</b>${isAct && rec.start ? ` · ${rec.start}${rec.end ? '–' + rec.end : ''}` : !isAct && rec.time ? ` · ${rec.time}` : ''}${skipped ? ' <span class="pill warn">Skipped</span>' : ''}</div>
       <div class="actions" style="justify-content:flex-start">
         ${repeating ? `<button class="btn" data-act="ev-skip">${skipped ? 'Undo skip' : `Skip ${C.fmtDay(sh.date)} only`}</button>` : ''}
@@ -1913,7 +1971,7 @@
       </nav>
       <main class="main">
         <header class="topbar"><span class="tcat" aria-hidden="true">${FH.cats[v === 'child' ? 'welcome' : v] || FH.cats.today}</span><h2>${esc(title)}</h2><span class="proto">Beta</span><button class="iconbtn gear" data-act="nav" data-v="settings" aria-label="Settings">${ic('settings')}</button></header>
-        ${content}
+        ${S.view === 'today' && FH.install ? `<div class="instwrap">${FH.install.bar(true)}</div>` : ''}${content}
       </main>
       <nav class="tabbar" aria-label="Main">${navList().map(([k, l]) => `<button data-act="nav" data-v="${k}" ${cur(k)}>${ic(k)}${l}</button>`).join('')}</nav>
       ${fab ? `<button class="fab" data-act="add" data-v="${v === 'tasks' || !isAdmin() ? 'task' : S.lastAdd || 'activity'}"${v === 'child' ? ` data-child="${S.child}"` : ''}>${ic('plus')}Add</button>` : ''}
@@ -1963,10 +2021,12 @@
   async function saveChild() {
     const sh = S.sheet;
     const name = $('#f-name').value.trim();
-    if (!name) { $('#f-err').textContent = "Enter the child's first name."; $('#f-name').focus(); return; }
-    const twin = S.children.find(c => c.id !== sh.id && c.name.toLowerCase() === name.toLowerCase());
-    if (twin) { $('#f-err').textContent = `There is already a child called ${twin.name}. Use a different name, or add a surname initial.`; return; }
-    const rec = { type: 'child', name, grade: $('#f-grade').value, colour: sh.colour };
+    const cur = sh.id ? S.people.find(x => x.id === sh.id) : null;
+    const adult = cur?.type === 'adult';
+    if (!name) { $('#f-err').textContent = adult ? 'Enter a name.' : "Enter the child's first name."; $('#f-name').focus(); return; }
+    const twin = S.people.find(c => c.id !== sh.id && c.name.toLowerCase() === name.toLowerCase());
+    if (twin) { $('#f-err').textContent = `There is already someone called ${twin.name}. Use a different name, or add a surname initial.`; return; }
+    const rec = adult ? { name, colour: sh.colour } : { type: 'child', name, grade: $('#f-grade').value, colour: sh.colour };
     if (sh.id) rec.id = sh.id; else rec.order = S.children.length;
     await data.save('people', rec);
     S.sheet = null; await load(); render();
@@ -1977,9 +2037,34 @@
   const val = id => ($(id)?.value ?? '').trim();
   const fail = m => { const e = $('#f-err'); if (e) e.textContent = m; return false; };
 
+  /* Saves an activity or reminder for everyone ticked: one record per person, sharing a
+     group id, so each person only ever receives their own copy. Editing changes all of
+     them, unless "Apply changes to" names one person, who then gets their own item. */
+  async function saveShared(store, sh, fields) {
+    const list = store === 'activities' ? S.activities : S.reminders;
+    const cur = sh.id ? list.find(x => x.id === sh.id) : null;
+    const scope = cur ? ($('#f-scope')?.value || 'all') : 'all';
+    if (cur && scope !== 'all') {
+      const one = groupOf(list, cur).find(x => x.owner === scope) || cur;
+      await data.save(store, { ...fields, id: one.id, group: '', adult: isAdultId(one.owner) });
+      return [one.owner];
+    }
+    const ids = whoTicked();
+    const grp = cur ? groupOf(list, cur) : [];
+    const group = ids.length > 1 ? (cur?.group || newGroup()) : '';
+    for (const x of grp) if (!ids.includes(x.owner)) await data.remove(store, x.id);
+    for (const id of ids) {
+      const had = grp.find(x => x.owner === id);
+      await data.save(store, { ...fields, ...(had ? { id: had.id } : { owner: id, skips: (cur?.skips || []).slice() }), group, adult: isAdultId(id) });
+    }
+    return ids;
+  }
+  const needWho = sh => (sh.id && $('#f-scope') && $('#f-scope').value !== 'all') || whoTicked().length;
+
   async function saveActivity() {
     const sh = S.sheet;
     const title = val('#f-title');
+    if (!needWho(sh)) return fail('Tick who the activity is for.');
     const weekdays = [...document.querySelectorAll('.dchip[aria-pressed="true"]')].map(b => Number(b.dataset.day));
     const start = val('#f-start'), end = val('#f-end'), from = val('#f-from'), until = val('#f-until');
     if (!title) return fail('Give the activity a name, for example Hockey practice.');
@@ -1990,28 +2075,25 @@
     if (from && !C.isDate(from)) return fail('The From date is not a valid date.');
     if (until && !C.isDate(until)) return fail('The Until date is not a valid date.');
     if (from && until && until < from) return fail('The Until date must be on or after the From date.');
-    const rec = { owner: val('#f-child'), title, weekdays, start, end, place: val('#f-place'), from: from || C.today(), until, runsInHolidays: !$('#f-pause').checked };
-    if (sh.id) rec.id = sh.id; else rec.skips = [];
-    await data.save('activities', rec);
+    const ids = await saveShared('activities', sh, { title, weekdays, start, end, place: val('#f-place'), from: from || C.today(), until, runsInHolidays: !$('#f-pause').checked });
     S.sheet = null; S.lastAdd = 'activity'; await load(); render();
-    toast(`${title} ${sh.id ? 'updated' : `added for ${nameOf(rec.owner)}: ${daysText(weekdays).toLowerCase() === 'every day' ? 'every day' : daysText(weekdays)}`}.`);
+    toast(`${title} ${sh.id ? 'updated' : `added for ${namesOf(ids).replace(/^Everyone$/, 'everyone')}: ${daysText(weekdays).toLowerCase() === 'every day' ? 'every day' : daysText(weekdays)}`}.`);
     return true;
   }
   async function saveReminder() {
     const sh = S.sheet;
     const title = val('#f-title'), date = val('#f-date'), time = val('#f-time'), repeat = val('#f-repeat'), until = val('#f-until');
+    if (!needWho(sh)) return fail('Tick who the reminder is for.');
     if (!title) return fail('Give the reminder a name.');
     if (!C.isDate(date)) return fail('Choose the date for the reminder.');
     if (time && !C.isTime(time)) return fail('The time is not a valid time.');
     if (until && !C.isDate(until)) return fail('The Repeat until date is not a valid date.');
     if (until && until < date) return fail('Repeat until must be on or after the reminder date.');
-    const rec = { owner: val('#f-child'), title, date, time, repeat, until: repeat === 'none' ? '' : until };
-    if (sh.id) rec.id = sh.id; else rec.skips = [];
-    await data.save('reminders', rec);
+    const ids = await saveShared('reminders', sh, { title, date, time, repeat, until: repeat === 'none' ? '' : until });
     S.sheet = null; S.lastAdd = 'reminder'; await load();
     if (S.view === 'calendar') { S.cal.cursor = date; S.cal.sel = date; }
     render();
-    toast(`${title} ${sh.id ? 'updated' : 'added'} for ${C.fmtDay(date)}.`);
+    toast(`${title} ${sh.id ? 'updated' : `added for ${namesOf(ids).replace(/^Everyone$/, 'everyone')}`} on ${C.fmtDay(date)}.`);
     return true;
   }
   async function saveTask() {
@@ -2073,6 +2155,18 @@
     const pick = child || (S.view === 'child' ? S.child : (vis.length === 1 ? vis[0].id : S.children[0].id));
     S.sheet = { kind, child: pick }; renderSheet();
     setTimeout(() => $('#f-title')?.focus(), 30);
+  }
+
+  /* Each parent is a person too, with a colour, so their own activities and reminders can go
+     on the calendar. The record's id comes from the sign-in, so two devices make the same one. */
+  async function ensureParent() {
+    if (!S.session || !isAdmin() || !S.session.uid) return false;
+    const id = 'adult-' + S.session.uid;
+    if (S.adults.some(p => p.id === id || p.uid === S.session.uid) || await data.known('people', id)) return false;
+    const used = new Set(S.people.map(p => p.colour));
+    const colour = ([...COLOURS].reverse().find(([k]) => !used.has(k)) || COLOURS[COLOURS.length - 1])[0];
+    await data.save('people', { id, type: 'adult', uid: S.session.uid, name: (S.session.name || 'Parent').split(' ')[0], colour, order: 100 + S.adults.length });
+    return true;
   }
 
   async function finishSetup() {
@@ -2203,6 +2297,8 @@
         case 'mem-role': readPeopleForm(); renderSheet(); return;
         case 'mem-decline': await removeMember(v, true); return;
         case 'mem-remove': if (!S.sheet.armed) { readPeopleForm(); S.sheet.armed = true; renderSheet(); return; } await removeMember(v, false); return;
+        case 'login-copy': { const t = signinMsg(b.dataset.n, v); try { await navigator.clipboard.writeText(t); toast('Message copied. Paste it in WhatsApp or a text message.'); } catch (e) { $('#login-link')?.select(); toast('Select the link and copy it.'); } return; }
+        case 'login-share': try { await navigator.share({ title: 'Herding Cats sign-in', text: signinMsg(b.dataset.n, v) }); } catch (e) { /* closed */ } return;
         case 'inv-copy': { const t = $('#inv-link'); try { await navigator.clipboard.writeText(t.value); toast('Invite link copied. Paste it in a message to the person you\'re inviting.'); } catch (e) { t.select(); toast('Select the link and copy it.'); } return; }
         case 'inv-share': try { await navigator.share({ title: 'Join our family on Herding Cats', text: `Join ${S.family || S.session.familyName} on Herding Cats:`, url: $('#inv-link').value }); } catch (e) { /* closed */ } return;
         case 'inv-cancel': try { await FH.cloud.cancelInvite(S.session.familyId, v); if (S.newInvite && S.newInvite.token === v) S.newInvite = null; await loadPeople(); toast('Invite link cancelled. It no longer works.'); } catch (e) { toast(FH.cloud.message(e)); } render(); return;
@@ -2232,11 +2328,14 @@
         /* adding and editing */
         case 'add': openAdd(v, b.dataset.child); return;
         case 'add-type': {
-          const child = $('#f-child')?.value, title = $('#f-title')?.value;
-          S.sheet = { kind: v, child }; renderSheet();
+          const ticked = $('.f-who') ? whoTicked() : null;
+          const child = $('#f-child')?.value || (ticked || []).find(id => S.children.some(c => c.id === id)) || S.sheet?.child, title = $('#f-title')?.value;
+          S.sheet = { kind: v, child, who: ticked && ticked.length ? ticked : child ? [child] : null }; renderSheet();
           if (title) $('#f-title').value = title;
           return;
         }
+        case 'who-all': for (const i of document.querySelectorAll('.f-who')) i.checked = b.checked; return;
+        case 'who': { const all = $('#f-who-all'); if (all) all.checked = [...document.querySelectorAll('.f-who')].every(i => i.checked); return; }
         case 'day-toggle': b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); return;
         case 'ev': {
           const [k, id, date] = v.split('|');
@@ -2268,11 +2367,14 @@
         case 'ev-skip': {
           const sh = S.sheet;
           const store = sh.ekind === 'act' ? 'activities' : 'reminders';
-          const rec = (sh.ekind === 'act' ? S.activities : S.reminders).find(x => x.id === sh.id);
-          const skips = new Set(rec.skips || []);
-          const undo = skips.has(sh.date);
-          undo ? skips.delete(sh.date) : skips.add(sh.date);
-          await data.save(store, { id: rec.id, skips: [...skips].sort() });
+          const list = sh.ekind === 'act' ? S.activities : S.reminders;
+          const rec = list.find(x => x.id === sh.id);
+          const undo = (rec.skips || []).includes(sh.date);
+          for (const x of groupOf(list, rec)) { // a shared item is skipped for everyone on it
+            const skips = new Set(x.skips || []);
+            undo ? skips.delete(sh.date) : skips.add(sh.date);
+            await data.save(store, { id: x.id, skips: [...skips].sort() });
+          }
           await load(); render(); renderSheet();
           toast(undo ? `${rec.title} is back on for ${C.fmtDay(sh.date)}.` : `${rec.title} skipped on ${C.fmtDay(sh.date)} only.`);
           return;
@@ -2306,7 +2408,12 @@
           if (sh.kind === 'period') for (const st of ['sessions', 'exams']) for (const x of S[st].filter(r => r.period === sh.id)) await data.remove(st, x.id);
           if (sh.kind === 'exam') for (const x of S.sessions.filter(r => r.exam === sh.id && !r.done)) await data.remove('sessions', x.id);
           const rec = list.find(x => x.id === sh.id);
-          await data.remove(store, sh.id);
+          if ((sh.kind === 'activity' || sh.kind === 'reminder') && rec) {
+            /* A shared item goes for everyone on it, or only the person chosen in "Apply changes to". */
+            const scope = $('#f-scope')?.value || 'all';
+            const grp = groupOf(list, rec);
+            for (const x of scope === 'all' ? grp : grp.filter(y => y.owner === scope)) await data.remove(store, x.id);
+          } else await data.remove(store, sh.id);
           S.sheet = null; await load(); render();
           toast(`${rec?.title || rec?.name || 'Item'} deleted.`);
           return;
@@ -2435,8 +2542,8 @@
         /* digest and shortcuts */
         case 'digest-open': S.sheet = { kind: 'digest' }; renderSheet(); return;
         case 'digest-close': S.sheet = null; renderSheet(); await data.setSetting('digestSeen', C.today()); return;
-        case 'only-child': S.hidden = new Set(S.children.filter(c => c.id !== v).map(c => c.id)); S.cal.mode = 'week'; S.cal.cursor = C.today(); saveCalPrefs(); go('calendar'); return;
-        case 'install': if (S.installEvt) { S.installEvt.prompt(); const r = await S.installEvt.userChoice; S.installEvt = null; render(); if (r.outcome === 'accepted') toast('Herding Cats is being installed.'); } return;
+        case 'only-child': S.hidden = new Set(S.people.filter(c => c.id !== v).map(c => c.id)); S.cal.mode = 'week'; S.cal.cursor = C.today(); saveCalPrefs(); go('calendar'); return;
+        case 'install': FH.install && FH.install.run(); return;
         default: return;
       }
     } catch (e) {
@@ -2481,6 +2588,7 @@
   });
 
   document.addEventListener('change', ev => {
+    if (ev.target.id === 'f-scope') { const one = ev.target.value !== 'all'; for (const i of document.querySelectorAll('.f-who, #f-who-all')) i.disabled = one; return; }
     if (ev.target.id === 'f-person' && S.sheet && S.sheet.kind === 'login') { readPeopleForm(); S.sheet.username = undefined; renderSheet(); return; }
     if (ev.target.id === 'imp-photo') { const f = ev.target.files && ev.target.files[0]; ev.target.value = ''; if (f && S.study.imp) readPhoto(f); return; }
     if (ev.target.id !== 'restore-file') return;
@@ -2496,8 +2604,7 @@
 
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && S.sheet) { S.sheet = null; renderSheet(); } });
   window.addEventListener('hashchange', () => { fromHash(); render(); });
-  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); S.installEvt = e; if (S.view === 'settings') render(); });
-  window.addEventListener('appinstalled', () => { S.installEvt = null; toast('Herding Cats is installed.'); render(); });
+  window.addEventListener('appinstalled', () => { toast('Herding Cats is installed.'); if (S.view === 'settings') render(); });
 
   /* ---------- Offline support (only when the app has its own web address) ---------- */
   if ('serviceWorker' in navigator && !inFrame && (location.protocol === 'https:' || location.hostname === 'localhost')) {
@@ -2538,6 +2645,7 @@
       await loadSettings();
       if (S.session && !S.family && S.session.familyName) { S.family = S.session.familyName; await data.setSetting('familyName', S.family); }
       await load();
+      if (await ensureParent()) await load();
       await refreshStorage();
       S.ready = true;
     } catch (e) {
