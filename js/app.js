@@ -2533,7 +2533,8 @@
           loadPeople();
         }
       } else await data.ready();
-      await importOfficial();
+      /* Only parents add the official school dates; everyone else receives them from the family. */
+      if (isAdmin()) await importOfficial();
       await loadSettings();
       if (S.session && !S.family && S.session.familyName) { S.family = S.session.familyName; await data.setSetting('familyName', S.family); }
       await load();
