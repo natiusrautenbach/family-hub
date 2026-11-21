@@ -8,7 +8,7 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '3.0.3';
+  const VERSION = '3.0.4';
   const MILESTONE = 7;
   const PHASE2 = '2.5'; // Phase 2 milestone in this build
   /* Who is using the app decides what it offers (the server decides what they receive). */
@@ -2270,9 +2270,9 @@
   }
   /* ---------- The back button (Android) and swipe back (iPhone) ----------
      Back closes an open form first, then goes to the previous screen, then to Today. On
-     Today it asks for a second press before leaving the app, so one press too many doesn't
-     close it. The browser history holds one extra step that catches each back press. */
-  const back = { stack: [], armed: false, t: 0 };
+     Today it stays (with a hint to use Home): a web app can't minimise itself. The browser
+     history holds one extra step that catches each back press. */
+  const back = { stack: [], armed: false };
   function remember(view, child) {
     if (S.view === view && S.child === child) return;
     if (view === 'today') { back.stack = []; return; }
@@ -2294,11 +2294,10 @@
     const prev = back.stack.pop();
     if (prev) { go(prev.view, prev.child, true); armBack(); return; }
     if (S.view !== 'today') { go('today', null, true); armBack(); return; }
-    /* First press on Today: a warning, and nothing catches the next press for a moment, so a
-       second press is handled by the phone itself, exactly as for any other app. */
-    toast('Press back again to close Herding Cats.');
-    clearTimeout(back.t);
-    back.t = setTimeout(armBack, 2500);
+    /* On Today, back never closes the app: an installed web app that closes this way can't be
+       reopened from recent apps on Android. Home (or swipe up) keeps it open in the background. */
+    toast('To leave Herding Cats, use the Home button or swipe up.');
+    armBack();
   });
   /* Coming back to the app (from recent apps or the icon) catches back presses again. */
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.ready) armBack(); });
