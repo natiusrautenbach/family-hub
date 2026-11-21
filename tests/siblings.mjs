@@ -57,7 +57,7 @@ try {
     await pg.click('[data-act=login-add]'); await pg.waitForSelector('[data-form=login]');
     await pg.selectOption('#f-person', { label: name }); await pg.waitForTimeout(200);
     await pg.fill('#f-pass', 'kitty1234'); if (sibs) await pg.check('#f-sibs');
-    await pg.click('[data-form=login] button[type=submit]'); await pg.waitForSelector('#new-login', { timeout: 20000 });
+    await pg.click('[data-form=login] button[type=submit]'); await pg.waitForSelector(`#new-login:has-text("${name} can now sign in")`, { timeout: 20000 });
   };
 
   // (a) allowed from the start
@@ -82,6 +82,7 @@ try {
   const pl = await newPage();
   // Liam signs in from his sign-in link: the family code and username are filled in.
   const link = await pg.inputValue('#login-link');
+  console.log('  (b) link:', link);
   ok(link.endsWith(`?u=${code}.liam`), '(b) the sign-in link names the family code and username');
   await pl.goto(link); await pl.waitForSelector('#g-code', { timeout: 30000 });
   ok(await pl.inputValue('#g-code') === code && await pl.inputValue('#g-user') === 'liam', '(b) the link fills in the code and username');
