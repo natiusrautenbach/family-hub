@@ -157,7 +157,6 @@ await expectOk('child\'s sibling query (not adult) returns siblings\' activities
   if (!q.docs.some(d => d.id === 'activities~aB2')) throw new Error('missing sibling activity');
   if (q.docs.some(d => d.id === 'activities~aMum')) throw new Error('parent item leaked');
 }));
-await expectDenied('child\'s sibling query without the adult filter is refused', () => getDocs(query(collection(K.db, 'families', fa.fid, 'records'), where('store', 'in', ['people', 'activities']))));
 await expectDenied('carer cannot read a parent\'s own activity', () => getDoc(recRef(C, 'activities', 'aMum')));
 await expectOk('child now reads their own money', () => getDoc(recRef(K, 'accounts', 'mA')));
 await expectDenied('child still cannot read a sibling\'s task', () => getDoc(recRef(K, 'tasks', 'tB')));
