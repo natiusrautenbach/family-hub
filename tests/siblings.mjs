@@ -80,6 +80,9 @@ try {
   ok(!s.acts.includes('Mum gym'), '(a) Ava does not see a parent\'s own activity');
   ok(!s.people.includes('Natius'), '(a) Ava does not receive the parent person');
   // Phase 3: Ava sees her own lift for today, with the driver's name (parents are hidden from her otherwise).
+  console.log('  (a) sheet open:', (await pa.locator('#sheet .panel').count()) ? (await pa.innerText('#sheet')).slice(0, 200) : 'none');
+  if (await pa.locator('[data-act=digest-close]').count()) await pa.click('[data-act=digest-close]');
+  console.log('  (a) Ava lifts:', JSON.stringify(await pa.evaluate(() => ({ cfg: FH.app.S.liftCfg, swim: FH.app.S.activities.find(a => a.title === 'Ava swim'), off: FH.app.S.sc.offDay(FH.cal.today()), today: FH.cal.today(), lifts: document.querySelector('#child-lifts')?.innerText || 'no card', view: FH.app.S.view }))));
   ok((await pa.innerText('main')).includes('Natius takes you to Ava swim at 17:00'), '(a) Ava sees who takes her to her activity today');
   ok(s.rems.filter(t => t === 'Family dinner').length === 1, '(a) Ava gets her own copy of the reminder for everyone');
   await pa.click('[data-act=nav][data-v=calendar] >> visible=true'); await pa.waitForTimeout(500);
