@@ -48,6 +48,12 @@ try {
   await pg.click('.fab'); await pg.click('[data-act=add-type][data-v=reminder]'); await pg.waitForSelector('#f-who-all');
   await pg.check('#f-who-all'); await pg.fill('#f-title', 'Family dinner');
   await pg.click('[data-form=reminder] button[type=submit]'); await pg.waitForTimeout(600);
+  // Phase 3: drivers on, and an activity for Ava today with a parent driving.
+  await pg.evaluate(async adult => {
+    await FH.data.save('lifts', { id: 'config', type: 'config', assign: true, drivers: [{ id: adult, name: 'Natius', parent: true, uid: '' }] });
+    const ava = FH.app.S.children.find(c => c.name === 'Ava');
+    await FH.data.save('activities', { owner: ava.id, title: 'Ava swim', weekdays: [FH.cal.dow(FH.cal.today())], start: '17:00', end: '18:00', place: '', from: FH.cal.today(), dropBy: { all: adult }, pickBy: { all: adult } });
+  }, adultId);
   const dinner = await pg.evaluate(() => FH.app.S.reminders.filter(r => r.title === 'Family dinner').map(r => [r.owner, r.group, !!r.adult]));
   ok(dinner.length === 3 && new Set(dinner.map(d => d[1])).size === 1 && dinner.filter(d => d[2]).length === 1, 'a reminder for everyone is one copy per person, in one group');
   await pg.waitForTimeout(3000);
@@ -73,6 +79,8 @@ try {
   ok(s.kids.includes('Liam'), '(a) Ava sees Liam on the calendar');
   ok(!s.acts.includes('Mum gym'), '(a) Ava does not see a parent\'s own activity');
   ok(!s.people.includes('Natius'), '(a) Ava does not receive the parent person');
+  // Phase 3: Ava sees her own lift for today, with the driver's name (parents are hidden from her otherwise).
+  ok((await pa.innerText('main')).includes('Natius takes you to Ava swim at 17:00'), '(a) Ava sees who takes her to her activity today');
   ok(s.rems.filter(t => t === 'Family dinner').length === 1, '(a) Ava gets her own copy of the reminder for everyone');
   await pa.click('[data-act=nav][data-v=calendar] >> visible=true'); await pa.waitForTimeout(500);
   ok((await pa.innerText('main')).includes('Liam hockey'), '(a) Liam\'s activity shows on Ava\'s calendar');

@@ -71,7 +71,7 @@
   const MONEY = ['accounts', 'entries', 'goals', 'ledger', 'chores', 'rewards'];
   /* An adult's own items (and the adult themselves) are never shown to a child's brothers and sisters. */
   const recAdult = (store, rec) => store === 'people' ? rec.type === 'adult' : !!rec.adult;
-  const recOwner = (store, rec) => store === 'people' ? rec.id : ['terms', 'daysoff'].includes(store) ? '_family' : (rec.owner || '_none');
+  const recOwner = (store, rec) => store === 'people' ? rec.id : ['terms', 'daysoff', 'lifts'].includes(store) ? '_family' : (rec.owner || '_none');
   /* Family usernames sign in with an address the app makes up; nobody ever sees it. */
   const loginKey = (code, username) => `${String(code || '').toUpperCase()}-${String(username || '').toLowerCase()}`;
   const usernameOk = u => /^[a-z0-9]{2,20}$/.test(u);

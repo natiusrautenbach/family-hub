@@ -11,7 +11,7 @@
 
   /* Internal names stay 'family-hub' after the rename to Herding Cats, so existing data and backups keep working. */
   let DB_NAME = 'family-hub';
-  const DB_VERSION = 7;
+  const DB_VERSION = 8;
   const BACKUP_FORMAT = 1;
 
   /* Each milestone adds stores by raising DB_VERSION and adding to this map;
@@ -35,6 +35,7 @@
     ledger:     { indexes: ['owner', 'date'] },         // milestone 5: money owed either way
     chores:     { indexes: ['owner'] },                 // milestone 6: chores with their done/not-done log and payouts
     rewards:    { indexes: ['owner'] },                 // milestone 6: reward goals (count towards a target)
+    lifts:      { indexes: ['type'] },                  // Phase 3: places (travel time from home) and the family's lift settings and drivers
     outbox:     { indexes: [] },                        // Phase 2: changes made here that the family server hasn't confirmed yet
   };
   /* Stores shared with the family through sync. meta (device settings), users
@@ -129,7 +130,7 @@
   const MONEY_STORES = ['accounts', 'entries', 'goals', 'ledger', 'chores', 'rewards'];
   function inScope(user, store, rec) {
     if (!rec || user.role === 'parent') return true;
-    if (store === 'terms' || store === 'daysoff') return true;
+    if (store === 'terms' || store === 'daysoff' || store === 'lifts') return true;
     const owner = store === 'people' ? rec.id : rec.owner;
     if (user.role === 'carer') return !MONEY_STORES.includes(store) && (user.kids || []).includes(owner);
     if (user.role === 'child_view' || user.role === 'child_limited') {

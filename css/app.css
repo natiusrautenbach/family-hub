@@ -528,3 +528,23 @@ details.sec[open]>summary{margin-bottom:12px}
 details.sec>summary:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:8px}
 .secacts{margin-bottom:10px}
 .aboutline{text-align:center;margin:6px 0 4px;line-height:1.6}
+/* Lifts (Phase 3) */
+.car{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vertical-align:-3px;flex:none}
+.lifttag{display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:0 6px;border-radius:999px;background:var(--sunk);font-size:11.5px;font-weight:600;color:var(--ink)}
+.trip .tleave{display:flex;flex-direction:column;align-items:flex-start;line-height:1.15}
+.trip .tleave b{font-size:15px}
+.trip .tleave small{font-size:11px;color:var(--muted)}
+.trip.faded{opacity:.55}
+.liftwarn{margin:0 0 8px;padding:8px 10px;border-radius:10px;background:var(--warnbg,#fdf0dc);color:var(--warnink,#7a4b00);font-size:13.5px}
+.liftline{display:flex;gap:8px;align-items:center;margin:4px 0;font-size:14.5px}
+.liftweek .dayh{font-size:14px;margin:14px 0 6px;color:var(--muted)}
+.liftweek .dayh:first-child{margin-top:4px}
+.liftbox .liftrow{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin:4px 0}
+.liftbox .lsel{display:flex;align-items:center;gap:8px;font-size:13.5px}
+.liftbox .lsel select{min-width:140px}
+.liftdays,.schooldays{display:grid;gap:6px;margin-top:8px}
+.liftday{display:grid;grid-template-columns:40px 1fr 1fr;gap:8px;align-items:center}
+.liftday.head small{color:var(--muted);font-size:12px}
+.liftday[hidden]{display:none}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .liftwarn{background:#3a2a10;color:#f3cf8f}}
+:root[data-theme=dark] .liftwarn{background:#3a2a10;color:#f3cf8f}

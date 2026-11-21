@@ -95,6 +95,7 @@ const recRef = (p, store, id) => doc(p.db, 'families', fa.fid, 'records', `${sto
 const MONEY = ['accounts', 'entries', 'goals', 'ledger', 'chores', 'rewards'];
 const rec = (store, id, owner, updatedAt, extra = {}) => Object.assign({ store, id, owner, money: MONEY.includes(store), updatedAt, by: 'x', deleted: false, json: JSON.stringify({ id, owner, updatedAt }), syncAt: serverTimestamp() }, extra);
 const T = '2026-11-15T10:00:00.000Z';
+const T2 = '2026-11-16T10:00:00.000Z';
 await expectOk('owner adds records for two children and the school calendar', async () => {
   await setDoc(recRef(A, 'people', 'kidA'), rec('people', 'kidA', 'kidA', T));
   await setDoc(recRef(A, 'people', 'kidB'), rec('people', 'kidB', 'kidB', T));
@@ -158,6 +159,16 @@ await expectOk('child\'s sibling query (not adult) returns siblings\' activities
   if (q.docs.some(d => d.id === 'activities~aMum')) throw new Error('parent item leaked');
 }));
 await expectDenied('carer cannot read a parent\'s own activity', () => getDoc(recRef(C, 'activities', 'aMum')));
+// Phase 3: lift settings and places belong to the whole family: everyone reads them, only parents change them.
+await expectOk('parent saves the lift settings and a place', async () => {
+  await setDoc(recRef(A, 'lifts', 'config'), rec('lifts', 'config', '_family', T));
+  await setDoc(recRef(A, 'lifts', 'pl1'), rec('lifts', 'pl1', '_family', T));
+});
+await expectDenied('a lift record must belong to the whole family', () => setDoc(recRef(A, 'lifts', 'pl2'), rec('lifts', 'pl2', 'kidA', T)));
+await expectOk('child reads the lift settings', () => getDoc(recRef(K, 'lifts', 'config')));
+await expectOk('carer reads the lift settings', () => getDoc(recRef(C, 'lifts', 'config')));
+await expectDenied('child cannot change the lift settings', () => setDoc(recRef(K, 'lifts', 'config'), rec('lifts', 'config', '_family', T2)));
+await expectDenied('carer cannot change the lift settings', () => setDoc(recRef(C, 'lifts', 'config'), rec('lifts', 'config', '_family', T2)));
 await expectOk('child now reads their own money', () => getDoc(recRef(K, 'accounts', 'mA')));
 await expectDenied('child still cannot read a sibling\'s task', () => getDoc(recRef(K, 'tasks', 'tB')));
 await expectOk('limited child ticks off own task', () => setDoc(recRef(K, 'tasks', 'tA'), rec('tasks', 'tA', 'kidA', '2026-11-15T12:00:00.000Z')));

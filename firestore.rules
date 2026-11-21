@@ -39,7 +39,7 @@ service cloud.firestore {
     // The kinds of record the app keeps (must match SYNCED in js/db.js).
     function knownStore(s) {
       return s in ['people', 'activities', 'reminders', 'terms', 'daysoff', 'tasks', 'periods', 'exams', 'sessions',
-                   'accounts', 'entries', 'goals', 'ledger', 'chores', 'rewards'];
+                   'accounts', 'entries', 'goals', 'ledger', 'chores', 'rewards', 'lifts'];
     }
     function moneyStore(s) { return s in ['accounts', 'entries', 'goals', 'ledger', 'chores', 'rewards']; }
 
@@ -216,7 +216,7 @@ service cloud.firestore {
         && rid == d.store + '~' + d.id
         && d.owner is string && d.owner.size() > 0 && d.owner.size() <= 80
         && d.money == moneyStore(d.store)
-        && (d.store in ['terms', 'daysoff']) == (d.owner == '_family')
+        && (d.store in ['terms', 'daysoff', 'lifts']) == (d.owner == '_family')
         && d.updatedAt is string && d.updatedAt.size() <= 30
         && d.deleted is bool
         && d.json is string && d.json.size() <= 200000
