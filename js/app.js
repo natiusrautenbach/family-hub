@@ -8,7 +8,7 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '3.0.0';
+  const VERSION = '3.0.1';
   const MILESTONE = 7;
   const PHASE2 = '2.5'; // Phase 2 milestone in this build
   /* Who is using the app decides what it offers (the server decides what they receive). */
@@ -30,7 +30,7 @@
     'go-restore', 'goal-add', 'goal-down', 'goal-edit', 'goal-reach', 'goal-reopen', 'goal-up', 'imp-start', 'led-add', 'led-edit', 'led-settle', 'period-add', 'period-edit', 'plan-build',
     'plan-rebuild', 'rec-del', 'reward-add', 'reward-approve', 'reward-edit', 'reward-minus', 'reward-plus', 'sess-add', 'sess-done', 'sess-edit', 'step-add', 'step-done', 'step-rm',
     'task-done', 'task-edit', 'term-add', 'term-edit', 'terms-reset', 'use-official', 'who', 'who-all',
-    'lift-assign', 'driver-add', 'driver-edit', 'place-add', 'place-edit', 'school-edit', 'trip-none', 'trip-on', 'trip-reset', 'trip-act', 'lift-same', 'lift-byday'];
+    'lift-assign', 'driver-add', 'driver-edit', 'school-edit', 'trip-none', 'trip-on', 'trip-reset', 'trip-act', 'lift-same', 'lift-byday'];
   const mayTap = a => isAdmin() || VIEW_ACTS.includes(a) || (ROLE_ACTS[S.session.role] || []).includes(a);
   /* Hides the buttons this person can't use, so they never meet a refusal. */
   function roleStyle() {
@@ -1710,39 +1710,29 @@
   const placeOf = id => S.places.find(p => p.id === id) || null;
   const liftCtx = () => ({ activities: S.activities, children: S.children, sc: S.sc, places: new Map(S.places.map(p => [p.id, p])) });
   const hasLifts = () => S.activities.some(a => S.children.some(c => c.id === a.owner)) || S.children.some(c => c.school && Object.keys(c.school).length);
-  /* Adds a place, or updates its travel time; returns its id. */
-  async function upsertPlace(name, mins) {
-    name = (name || '').trim();
-    if (!name) return '';
-    const m = mins === '' || mins == null ? null : Math.max(0, Math.min(600, Math.round(Number(mins)) || 0));
-    const had = S.places.find(p => p.name.toLowerCase() === name.toLowerCase());
-    if (had) { if (m !== null && m !== (had.minutes || 0)) await data.save('lifts', { id: had.id, minutes: m }); return had.id; }
-    return (await data.save('lifts', { type: 'place', name, minutes: m ?? 0, address: '' })).id;
-  }
   function tripText(t, you) {
     const who = you ? 'you' : esc(namesOf(t.kids));
     return t.leg === 'drop' ? `Take ${who} to ${esc(t.title)}` : t.leg === 'pick' ? `Fetch ${who} from ${esc(t.title)}` : `Fetch ${who} from school`;
   }
-  const tripWhen = t => `${t.leg === 'drop' ? 'Starts' : t.leg === 'school' ? 'School ends' : 'Ends'} ${t.time}${t.place && t.leg !== 'school' && t.place !== t.title ? ` · ${esc(t.place)}` : t.leg === 'school' && t.place && t.place !== 'School' ? ` · ${esc(t.place)}` : ''}${t.mins ? ` · ${t.mins} min away` : ''}`;
+  const tripWhen = t => `${t.leg === 'drop' ? 'Starts' : t.leg === 'school' ? 'School ends' : 'Ends'} ${t.time}${t.place && t.leg !== 'school' && t.place !== t.title ? ` · ${esc(t.place)}` : ''}`;
   function tripRow(t) {
     const assign = !!S.liftCfg.assign;
     const status = t.off ? 'No lift needed today' : t.replaced ? `Not needed: ${esc(t.replaced)} after school` : '';
     const dn = t.driver ? driverName(t.driver) : '';
     return `<button class="ev evb trip${status ? ' faded' : ''}" style="--c:var(--${colOf(t.kids[0])})" data-act="trip" data-v="${esc(t.id)}">
-      <span class="tleave"><b>${status || !t.mins ? t.time : t.leave}</b><small>${status ? '' : t.mins ? 'leave' : ''}</small></span>
+      <span class="tleave"><b>${t.time}</b><small>${t.leg === 'drop' ? 'starts' : 'ends'}</small></span>
       <span class="bar"${barStyle(t.kids)}></span>
-      <span class="min0"><span class="ti">${tripText(t)}</span><span class="sub">${tripWhen(t)}${assign && !status ? ` · ${dn ? esc(dn) : '<b class="warnt">No driver</b>'}` : ''}${status ? ` · ${status}` : ''}${t.changed && !t.off ? ' · changed for this day' : ''}</span></span></button>`;
+      <span class="min0"><span class="ti">${tripText(t)}</span><span class="sub">${tripWhen(t)}${assign && !status ? ` · ${dn ? esc(dn) : 'no driver yet'}` : ''}${status ? ` · ${status}` : ''}${t.changed && !t.off ? ' · changed for this day' : ''}</span></span></button>`;
   }
   function warnRow(w) {
-    if (w.type === 'nodriver') return `<p class="liftwarn">No driver yet: ${tripText(w.trips[0])} (${w.trips[0].time}).</p>`;
     const [a, b] = w.trips;
-    return `<p class="liftwarn">${w.driver ? `${esc(driverName(w.driver) || 'One driver')} is` : 'One person is'} needed in two places: ${tripText(a)} (${a.time}) and ${tripText(b)} (${b.time}).</p>`;
+    return `<p class="liftwarn">${esc(driverName(w.driver) || 'One driver')} is down for two lifts at ${a.time}: ${tripText(a)} and ${tripText(b)}.</p>`;
   }
   const myTrips = trips => (S.session && S.session.role === 'carer' && S.liftCfg.assign) ? trips.filter(t => t.driver && t.driver === myDriverId()) : trips;
   function liftsCard() {
-    if (!S.children.length || !hasLifts() || isChild()) return '';
+    if (!S.liftCfg.assign || !S.children.length || !hasLifts() || isChild()) return '';
     const trips = myTrips(FH.lifts.tripsOn(C.today(), liftCtx()));
-    const ws = FH.lifts.warnings(trips, !!S.liftCfg.assign);
+    const ws = FH.lifts.warnings(trips);
     return `<section class="card" id="lifts-today"><div class="card-h"><h3>Lifts today</h3><button class="btn sm" data-act="lifts-week">This week</button></div>
       ${ws.map(warnRow).join('')}
       ${trips.length ? trips.map(tripRow).join('') : '<p class="empty">No lifts today.</p>'}</section>`;
@@ -1750,6 +1740,7 @@
   /* A child's own lifts, in words: "Mum takes you to Ballet at 15:00". */
   function childLifts(id, home) {
     const c = S.children.find(x => x.id === id);
+    if (!S.liftCfg.assign) return '';
     const trips = FH.lifts.tripsOn(C.today(), liftCtx()).filter(t => t.kids.includes(id) && !t.off && !t.replaced);
     if (!c || !trips.length) return '';
     const assign = !!S.liftCfg.assign;
@@ -1785,7 +1776,7 @@
     for (let i = 0; i < 7; i++) {
       const d = C.addDays(C.today(), i);
       const trips = myTrips(FH.lifts.tripsOn(d, ctx));
-      const ws = FH.lifts.warnings(trips, assign);
+      const ws = FH.lifts.warnings(trips);
       days.push(`<h3 class="dayh">${i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : C.fmtDay(d)}</h3>${ws.map(warnRow).join('')}${trips.length ? trips.map(tripRow).join('') : '<p class="empty">No lifts.</p>'}`);
     }
     return panel('Lifts this week', `<div class="liftweek">${days.join('')}</div><div class="actions"><button class="btn" data-act="close">Close</button></div>`);
@@ -1819,7 +1810,7 @@
     return panel(tripText(t), `
       <div class="evhead" style="--c:var(--${colOf(t.kids[0])})"><span class="avs">${t.kids.map(id => avatar(kidOf(id) || { name: '?', colour: 'c1' })).join('')}</span><span class="min0"><b>${esc(namesOf(t.kids))}</b> · ${FH.lifts.LEG[t.leg]}<span class="meta" style="display:block">${tripWhen(t)}</span></span></div>
       <div class="card sunk" style="margin:12px 0"><b>${C.fmtLong(t.date)}</b>
-        <p class="small" style="margin-top:4px">${t.off ? '<span class="pill warn">No lift needed this day</span>' : t.replaced ? `No school pick-up: ${esc(t.replaced)} is straight after school.` : t.mins ? `Leave at <b>${t.leave}</b> to be there at ${t.time}.` : `Be there at ${t.time}. Add a travel time to the place to see when to leave.`}</p>
+        <p class="small" style="margin-top:4px">${t.off ? '<span class="pill warn">No lift needed this day</span>' : t.replaced ? `No school pick-up: ${esc(t.replaced)} is straight after school.` : `${t.leg === 'drop' ? 'Starts' : 'Ends'} at <b>${t.time}</b>.`}</p>
         ${assign && !t.off && !t.replaced ? `<p class="small">Driver: <b>${dn ? esc(dn) : 'not decided'}</b>${t.changed ? ' (changed for this day)' : ''}</p>` : ''}</div>
       ${isAdmin() ? `<form class="form" data-form="trip">
         ${assign && !t.off && !t.replaced ? `<label class="full">Driver on ${C.fmtDay(t.date)} only<select id="f-tdriver"><option value="">Not decided</option>${opts}</select></label>` : ''}
@@ -1841,7 +1832,7 @@
   }
   /* The Lifts part of the activity form. */
   function liftFields(a, days) {
-    if (!S.children.length) return '';
+    if (!S.children.length || !S.liftCfg.assign) return '';
     const assign = !!S.liftCfg.assign;
     const dOn = a ? a.dropOn !== false : true, pOn = a ? a.pickOn !== false : true;
     const db = a?.dropBy || {}, pb = a?.pickBy || {};
@@ -1849,7 +1840,7 @@
     const same = a ? !byDay && (db.all || '') === (pb.all || '') : true;
     const sel = (id, v, dis) => `<select id="${id}" ${dis ? 'disabled' : ''}><option value="">Not decided</option>${drivers().map(d => `<option value="${d.id}" ${d.id === v ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>`;
     return `<div class="full fieldset liftbox"><span class="flbl">Lifts</span>
-      <p class="hint" style="margin:0 0 8px">For children's activities. Untick a lift that isn't needed, for example when they walk or go straight from school.</p>
+      <p class="hint" style="margin:0 0 8px">For children's activities. The driver is optional. Untick a lift that isn't needed, for example when they walk or go straight from school.</p>
       <div class="liftrow"><label class="chk"><input type="checkbox" id="f-drop-on" ${dOn ? 'checked' : ''}>Drop-off needed</label>${assign ? `<label class="lsel">Driver${sel('f-drop-by', db.all || '')}</label>` : ''}</div>
       <div class="liftrow"><label class="chk"><input type="checkbox" id="f-pick-on" ${pOn ? 'checked' : ''}>Pick-up needed</label>${assign ? `<label class="lsel">Driver${sel('f-pick-by', same ? (db.all || '') : (pb.all || ''), same && !byDay)}</label>` : ''}</div>
       ${assign ? `<div class="row" style="gap:14px;margin-top:4px"><label class="chk"><input type="checkbox" id="f-same" data-act="lift-same" ${same && !byDay ? 'checked' : ''}>Same driver both ways</label>
@@ -1872,23 +1863,20 @@
     return out;
   }
   function liftsSettingsCard() {
-    const assign = !!S.liftCfg.assign;
+    const on = !!S.liftCfg.assign;
     const schoolSum = c => {
       const sc = c.school || {}, byTime = new Map();
       for (const d of WEEK_ORDER) if (sc[d] && sc[d].time) { const k = sc[d].time; if (!byTime.has(k)) byTime.set(k, []); byTime.get(k).push(d); }
       return byTime.size ? [...byTime].map(([t, ds]) => `${daysText(ds)} ${t}`).join('; ') : 'No school pick-up';
     };
     return `<section class="card" id="lifts-set"><div class="card-h"><h3>Lifts and driving</h3></div>
-      <label class="chk"><input type="checkbox" id="f-assign" data-act="lift-assign" ${assign ? 'checked' : ''}>Assign drivers to lifts</label>
-      <p class="hint" style="margin-top:4px">Off: the driving schedule shows the trips and when to leave. On: choose who drives each trip, and see a warning when nobody is down to drive.</p>
-      ${assign ? `<p class="flbl" style="margin-top:14px">Drivers</p>${drivers().map(d => `<div class="set"><span class="min0"><b>${esc(d.name)}</b> <span class="muted">· ${d.parent ? 'parent' : d.uid ? 'has a login' : 'not on the app'}</span></span>${d.parent ? '' : `<button class="btn sm" data-act="driver-edit" data-v="${d.id}">Edit</button>`}</div>`).join('')}
-        <div class="row" style="margin-top:8px"><button class="btn sm" data-act="driver-add">Add a driver</button></div>` : ''}
-      <p class="flbl" style="margin-top:14px">Places and travel time from home</p>
-      ${S.places.map(p => `<div class="set"><span class="min0"><b>${esc(p.name)}</b> <span class="muted">· ${p.minutes ? `${p.minutes} min` : 'no travel time yet'}</span></span><button class="btn sm" data-act="place-edit" data-v="${p.id}">Edit</button></div>`).join('') || '<p class="empty">No places yet. A place is added when you type where an activity is.</p>'}
-      <div class="row" style="margin-top:8px"><button class="btn sm" data-act="place-add">Add a place</button></div>
+      <label class="chk"><input type="checkbox" id="f-assign" data-act="lift-assign" ${on ? 'checked' : ''}>Plan lifts and drivers</label>
+      <p class="hint" style="margin-top:4px">Off: you just see the activities. On: Today shows the day's drop-offs and pick-ups, and you can choose a driver for each.</p>
+      ${on ? `<p class="flbl" style="margin-top:14px">Drivers</p>${drivers().map(d => `<div class="set"><span class="min0"><b>${esc(d.name)}</b> <span class="muted">· ${d.parent ? 'parent' : d.uid ? 'has a login' : 'not on the app'}</span></span>${d.parent ? '' : `<button class="btn sm" data-act="driver-edit" data-v="${d.id}">Edit</button>`}</div>`).join('')}
+        <div class="row" style="margin-top:8px"><button class="btn sm" data-act="driver-add">Add a driver</button></div>
       <p class="flbl" style="margin-top:14px">School pick-up</p>
       ${S.children.map(c => `<div class="set"><span class="row" style="flex-wrap:nowrap">${avatar(c)}<span class="min0"><b>${esc(c.name)}</b> <span class="muted">· ${esc(schoolSum(c))}</span></span></span><button class="btn sm" data-act="school-edit" data-v="${c.id}">Edit</button></div>`).join('') || '<p class="empty">Add your children first.</p>'}
-      <p class="hint" style="margin-top:8px">On a day when an activity starts within three hours after school, the school pick-up is replaced by that activity's lifts.</p>
+      <p class="hint" style="margin-top:8px">On a day when an activity starts within three hours after school, the school pick-up is replaced by that activity's lifts.</p>` : ''}
     </section>`;
   }
   function driverSheet() {
@@ -1912,36 +1900,12 @@
     await data.save('lifts', { id: 'config', type: 'config', drivers: list });
     S.sheet = null; await load(); render(); toast(`${name} ${sh.id ? 'updated' : 'added as a driver'}.`);
   }
-  function placeSheet() {
-    const sh = S.sheet, pl = sh.id ? placeOf(sh.id) : null;
-    return panel(pl ? `Edit ${esc(pl.name)}` : 'Add a place', `<form class="form" data-form="place" style="margin-top:14px">
-      <label class="full">Place<input id="f-name" value="${esc(pl?.name || '')}" placeholder="e.g. Sports club" autocomplete="off"></label>
-      <label>Travel time from home (minutes)<input id="f-mins" type="number" min="0" max="600" inputmode="numeric" value="${pl ? pl.minutes || '' : ''}"></label>
-      <label class="full">Address (optional)<input id="f-addr" value="${esc(pl?.address || '')}" autocomplete="off"></label>
-      <div class="err full" id="f-err" role="alert"></div>
-      <div class="actions full">${pl ? `<button type="button" class="btn del${sh.confirm ? ' armed' : ''}" data-act="rec-del">${sh.confirm ? 'Tap again to remove' : 'Remove'}</button>` : ''}<button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">${pl ? 'Save' : 'Add place'}</button></div>
-    </form>`);
-  }
-  async function savePlace() {
-    const sh = S.sheet, name = val('#f-name'), mins = val('#f-mins');
-    if (!name) return fail('Enter the name of the place.');
-    if (mins && !(Number(mins) >= 0 && Number(mins) <= 600)) return fail('Enter the travel time in minutes, from 0 to 600.');
-    const twin = S.places.find(p => p.id !== sh.id && p.name.toLowerCase() === name.toLowerCase());
-    if (twin) return fail(`There is already a place called ${twin.name}.`);
-    const rec = { type: 'place', name, minutes: mins ? Math.round(Number(mins)) : 0, address: val('#f-addr') };
-    if (sh.id) rec.id = sh.id;
-    await data.save('lifts', rec);
-    S.sheet = null; await load(); render(); toast(`${name} saved.`);
-  }
   function schoolSheet() {
     const sh = S.sheet, c = S.children.find(x => x.id === sh.id);
     if (!c) return panel('Not found', '<div class="actions"><button class="btn" data-act="close">Close</button></div>');
-    const sc = c.school || {}, pl = c.schoolPlace ? placeOf(c.schoolPlace) : null, assign = !!S.liftCfg.assign;
+    const sc = c.school || {}, assign = !!S.liftCfg.assign;
     const sel = (id, v) => `<select id="${id}" aria-label="Driver"><option value="">Not decided</option>${drivers().map(d => `<option value="${d.id}" ${d.id === v ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>`;
     return panel(`School pick-up for ${esc(c.name)}`, `<form class="form" data-form="school" style="margin-top:14px">
-      <label class="full">School<input id="f-place" list="dl-places" value="${esc(pl?.name || '')}" placeholder="e.g. Greenside Primary" autocomplete="off"></label>
-      <label>Travel time from home (minutes)<input id="f-mins" type="number" min="0" max="600" inputmode="numeric" value="${pl ? pl.minutes || '' : ''}"></label>
-      ${placesList()}
       <div class="full fieldset"><span class="flbl">Pick-up time${assign ? ' and driver' : ''} (leave empty on days with no pick-up)</span>
         <div class="schooldays">${[1, 2, 3, 4, 5].map(d => `<div class="liftday"><b>${C.DOW[d]}</b><input id="f-st-${d}" type="time" value="${(sc[d] || {}).time || ''}" aria-label="${C.DOWL ? C.DOWL[d] : C.DOW[d]} pick-up time">${assign ? sel('f-sb-' + d, (sc[d] || {}).by || '') : ''}</div>`).join('')}</div></div>
       <p class="hint full">Only on school days. When an activity starts within three hours after school, its lifts replace the school pick-up.</p>
@@ -1949,7 +1913,6 @@
       <div class="actions full"><button type="button" class="btn" data-act="close">Cancel</button><button class="btn pri" type="submit">Save</button></div>
     </form>`);
   }
-  const placesList = () => `<datalist id="dl-places">${S.places.map(p => `<option value="${esc(p.name)}"></option>`).join('')}</datalist>`;
   async function saveSchool() {
     const sh = S.sheet, school = {};
     for (const d of [1, 2, 3, 4, 5]) {
@@ -1957,8 +1920,7 @@
       if (t && !C.isTime(t)) return fail(`The ${C.DOW[d]} time is not a valid time.`);
       if (t) school[d] = { time: t, by: S.liftCfg.assign && $('#f-sb-' + d) ? val('#f-sb-' + d) : ((S.children.find(x => x.id === sh.id)?.school || {})[d] || {}).by || '' };
     }
-    const placeId = await upsertPlace(val('#f-place'), val('#f-mins'));
-    await data.save('people', { id: sh.id, school, schoolPlace: placeId });
+    await data.save('people', { id: sh.id, school });
     S.sheet = null; await load(); render(); toast('School pick-up saved.');
   }
 
@@ -2017,7 +1979,7 @@
         <p class="meta" style="margin-bottom:8px">Parents have their own colour on the calendar. A parent's own activities and reminders are only seen by parents.</p>
         ${S.adults.map(c => `<div class="set"><span class="row" style="flex-wrap:nowrap">${avatar(c)}<span class="min0"><b>${esc(c.name)}</b>${c.uid === S.session?.uid ? ' <span class="muted">· you</span>' : ''}</span></span><button class="btn sm" data-act="child-edit" data-v="${c.id}">Edit</button></div>`).join('')}
       </section>` : '', esc(listNames(S.adults)))}
-      ${fold('lifts', liftsSettingsCard(), `Drivers ${S.liftCfg.assign ? 'on' : 'off'} · ${S.places.length} place${S.places.length === 1 ? '' : 's'}`)}
+      ${fold('lifts', liftsSettingsCard(), S.liftCfg.assign ? 'Lift planning on' : 'Off')}
       ${fold('people', membersCard(), famSum)}
       ${fold('terms', termsCard(), S.sc.coverEnd ? `Loaded up to ${C.fmtDate(S.sc.coverEnd)}` : '')}
       ${fold('backup', `
@@ -2120,9 +2082,7 @@
         <div class="full fieldset"><span class="flbl">Days</span><div class="daychips" role="group" aria-label="Days">${WEEK_ORDER.map(d => `<button type="button" class="dchip" data-act="day-toggle" data-day="${d}" aria-pressed="${days.includes(d)}">${C.DOW[d]}</button>`).join('')}</div></div>
         <label>Starts<input id="f-start" type="time" value="${a?.start || '15:00'}"></label>
         <label>Ends (optional)<input id="f-end" type="time" value="${a?.end || ''}"></label>
-        <label>Where (optional)<input id="f-place" list="dl-places" value="${esc((a?.placeId && placeOf(a.placeId)?.name) || a?.place || '')}" placeholder="e.g. School astro" autocomplete="off"></label>
-        <label>Travel time from home (min)<input id="f-mins" type="number" min="0" max="600" inputmode="numeric" value="${a?.placeId && placeOf(a.placeId) ? placeOf(a.placeId).minutes || '' : ''}" placeholder="e.g. 15"></label>
-        ${placesList()}
+        <label class="full">Where (optional)<input id="f-place" value="${esc((a?.placeId && placeOf(a.placeId)?.name) || a?.place || '')}" placeholder="e.g. School astro" autocomplete="off"></label>
         <label>From<input id="f-from" type="date" value="${a?.from || C.today()}"></label>
         <label>Until (optional)<input id="f-until" type="date" value="${a?.until || ''}"></label>
         <label class="chk full"><input id="f-pause" type="checkbox" ${a?.runsInHolidays ? '' : 'checked'}>Pause during school holidays and days off</label>
@@ -2288,7 +2248,7 @@
       return;
     }
     const k = S.sheet.kind;
-    el.innerHTML = k === 'trip' ? tripSheet() : k === 'lifts-week' ? liftsWeekSheet() : k === 'driver' ? driverSheet() : k === 'place' ? placeSheet() : k === 'school' ? schoolSheet()
+    el.innerHTML = k === 'trip' ? tripSheet() : k === 'lifts-week' ? liftsWeekSheet() : k === 'driver' ? driverSheet() : k === 'school' ? schoolSheet()
       : k === 'child' ? childSheet() : k === 'restore' ? restoreSheet() : k === 'activity' ? activitySheet()
       : k === 'reminder' ? reminderSheet() : k === 'event' ? eventSheet() : k === 'task' ? taskSheet() : k === 'taskview' ? taskViewSheet()
       : k === 'period' ? periodSheet() : k === 'exam' ? examSheet() : k === 'session' ? sessionSheet()
@@ -2376,10 +2336,7 @@
     if (from && !C.isDate(from)) return fail('The From date is not a valid date.');
     if (until && !C.isDate(until)) return fail('The Until date is not a valid date.');
     if (from && until && until < from) return fail('The Until date must be on or after the From date.');
-    const mins = val('#f-mins');
-    if (mins && !(Number(mins) >= 0 && Number(mins) <= 600)) return fail('Enter the travel time in minutes, from 0 to 600.');
-    const placeId = await upsertPlace(val('#f-place'), mins);
-    const ids = await saveShared('activities', sh, { title, weekdays, start, end, place: val('#f-place'), placeId, from: from || C.today(), until, runsInHolidays: !$('#f-pause').checked, ...readLiftFields(weekdays) });
+    const ids = await saveShared('activities', sh, { title, weekdays, start, end, place: val('#f-place'), placeId: '', from: from || C.today(), until, runsInHolidays: !$('#f-pause').checked, ...readLiftFields(weekdays) });
     S.sheet = null; S.lastAdd = 'activity'; await load(); render();
     toast(`${title} ${sh.id ? 'updated' : `added for ${namesOf(ids).replace(/^Everyone$/, 'everyone')}: ${daysText(weekdays).toLowerCase() === 'every day' ? 'every day' : daysText(weekdays)}`}.`);
     return true;
@@ -2650,13 +2607,11 @@
         case 'trip-act': { const t = curTrip(); if (t) { S.sheet = { kind: 'activity', id: t.recId }; renderSheet(); } return; }
         case 'lift-assign': {
           await data.save('lifts', { id: 'config', type: 'config', assign: b.checked, drivers: drivers() });
-          await load(); render(); toast(b.checked ? 'Drivers are on: choose who drives each lift.' : 'Drivers are off: the schedule shows just the trips.');
+          await load(); render(); toast(b.checked ? 'Lift planning is on: see the day\'s lifts on Today.' : 'Lift planning is off.');
           return;
         }
         case 'driver-add': S.sheet = { kind: 'driver' }; renderSheet(); return;
         case 'driver-edit': S.sheet = { kind: 'driver', id: v }; renderSheet(); return;
-        case 'place-add': S.sheet = { kind: 'place' }; renderSheet(); return;
-        case 'place-edit': S.sheet = { kind: 'place', id: v }; renderSheet(); return;
         case 'school-edit': S.sheet = { kind: 'school', id: v }; renderSheet(); return;
         case 'lift-same': { const p = $('#f-pick-by'); if (p) { p.disabled = b.checked; if (b.checked) p.value = val('#f-drop-by'); } return; }
         case 'lift-byday': { const box = $('.liftdays'); if (box) box.hidden = !b.checked; for (const id of ['#f-drop-by', '#f-pick-by', '#f-same']) { const el = $(id); if (el) el.disabled = b.checked || (id === '#f-pick-by' && $('#f-same').checked); } return; }
@@ -2732,17 +2687,11 @@
           return;
         case 'rec-del': {
           const sh = S.sheet;
-          if (!sh.confirm) { sh.confirm = true; b.classList.add('armed'); b.textContent = sh.kind === 'driver' || sh.kind === 'place' ? 'Tap again to remove' : 'Tap again to delete'; return; }
+          if (!sh.confirm) { sh.confirm = true; b.classList.add('armed'); b.textContent = sh.kind === 'driver' ? 'Tap again to remove' : 'Tap again to delete'; return; }
           if (sh.kind === 'driver') {
             const d = (S.liftCfg.drivers || []).find(x => x.id === sh.id);
             await data.save('lifts', { id: 'config', type: 'config', drivers: (S.liftCfg.drivers || []).filter(x => x.id !== sh.id) });
             S.sheet = null; await load(); render(); toast(`${d?.name || 'Driver'} removed. Their lifts now have no driver.`);
-            return;
-          }
-          if (sh.kind === 'place') {
-            const pl = placeOf(sh.id);
-            await data.remove('lifts', sh.id);
-            S.sheet = null; await load(); render(); toast(`${pl?.name || 'Place'} removed.`);
             return;
           }
           const store = { activity: 'activities', reminder: 'reminders', term: 'terms', dayoff: 'daysoff', task: 'tasks', exam: 'exams', session: 'sessions', period: 'periods', account: 'accounts', entry: 'entries', goal: 'goals', ledger: 'ledger', chore: 'chores', reward: 'rewards' }[sh.kind];
@@ -2918,7 +2867,6 @@
       if (f === 'activity') await saveActivity();
       if (f === 'trip') await saveTrip();
       if (f === 'driver') await saveDriver();
-      if (f === 'place') await savePlace();
       if (f === 'school') await saveSchool();
       if (f === 'reminder') await saveReminder();
       if (f === 'term') await saveTerm();
@@ -2930,7 +2878,6 @@
 
   document.addEventListener('input', ev => {
     const t = ev.target;
-    if (t.id === 'f-place' && $('#f-mins')) { const pl = S.places.find(p => p.name.toLowerCase() === t.value.trim().toLowerCase()); if (pl) $('#f-mins').value = pl.minutes || ''; }
     if (t.id && t.id.startsWith('alloc-')) updAlloc();
     if (t.classList.contains('su-name')) { const av = t.closest('.crow')?.querySelector('.avatar'); if (av) av.textContent = (t.value.trim()[0] || '?'); }
   });

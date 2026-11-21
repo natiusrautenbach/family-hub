@@ -5,8 +5,8 @@
 
    Activity fields used:  dropOn / pickOn (false = no lift needed), dropBy / pickBy
    ({ all: driverId, <weekday>: driverId }), placeId, liftDay ({ 'YYYY-MM-DD|drop': driverId or 'none' }).
-   Child fields used:     school ({ <weekday>: { time, by } }), schoolPlace, liftDay ({ 'YYYY-MM-DD|school': ... }).
-   A place:               { type: 'place', name, minutes } (travel time from home). */
+   Child fields used:     school ({ <weekday>: { time, by } }), liftDay ({ 'YYYY-MM-DD|school': ... }).
+   Times are the activity's own start and end times; drivers plan when to leave themselves. */
 (function () {
   'use strict';
   const FH = (window.FH = window.FH || {});
@@ -33,7 +33,7 @@
       if (!kids.has(a.owner)) continue;
       if (C.activityOn(a, s, ctx.sc) !== 'on') continue;
       const place = a.placeId ? ctx.places.get(a.placeId) : null;
-      const mins = place ? Number(place.minutes) || 0 : 0;
+      const mins = 0; // no travel times: drivers get the actual start and end times
       for (const leg of ['drop', 'pick']) {
         if (a[leg + 'On'] === false) continue;
         const time = leg === 'drop' ? a.start : a.end;
@@ -52,8 +52,7 @@
       for (const c of ctx.children) {
         const sp = c.school && c.school[wd];
         if (!sp || !sp.time) continue;
-        const place = c.schoolPlace ? ctx.places.get(c.schoolPlace) : null;
-        const mins = place ? Number(place.minutes) || 0 : 0;
+        const place = null, mins = 0;
         const follow = ctx.activities.find(a => a.owner === c.id && a.start && C.activityOn(a, s, ctx.sc) === 'on'
           && toMin(a.start) >= toMin(sp.time) && toMin(a.start) <= toMin(sp.time) + AFTER_SCHOOL);
         const over = (c.liftDay || {})[`${s}|school`];
@@ -68,27 +67,14 @@
     return out.sort((x, y) => x.leave.localeCompare(y.leave) || x.time.localeCompare(y.time));
   }
 
-  /* Problems with a day's trips: a trip with no driver (only when drivers are used), and
-     one driver (or, without drivers, the one person driving) needed in two places at once.
-     A trip takes its driver from the leave time to the arrival time. */
-  function warnings(trips, assign) {
-    const live = trips.filter(t => !t.off && !t.replaced);
+  /* A driver down for two lifts at the same time. The driver is optional, so a lift with
+     no driver is never a problem. */
+  function warnings(trips) {
+    const live = trips.filter(t => !t.off && !t.replaced && t.driver);
     const out = [];
-    if (assign) for (const t of live) if (!t.driver) out.push({ type: 'nodriver', trips: [t] });
-    const buckets = new Map();
-    for (const t of live) {
-      if (assign && !t.driver) continue;
-      const k = assign ? t.driver : '*';
-      if (!buckets.has(k)) buckets.set(k, []);
-      buckets.get(k).push(t);
-    }
-    for (const [driver, list] of buckets) {
-      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
-        const a = list[i], b = list[j];
-        const clash = a.time === b.time || (a.leave < b.time && b.leave < a.time);
-        if (clash && a.placeId && a.placeId === b.placeId && a.time === b.time) continue; // same place, same time: one trip
-        if (clash) out.push({ type: 'clash', driver: assign ? driver : '', trips: [a, b] });
-      }
+    for (let i = 0; i < live.length; i++) for (let j = i + 1; j < live.length; j++) {
+      const a = live[i], b = live[j];
+      if (a.driver === b.driver && a.time === b.time && a.place !== b.place) out.push({ type: 'clash', driver: a.driver, trips: [a, b] });
     }
     return out;
   }
