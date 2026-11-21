@@ -8,7 +8,7 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '3.0.2';
+  const VERSION = '3.0.3';
   const MILESTONE = 7;
   const PHASE2 = '2.5'; // Phase 2 milestone in this build
   /* Who is using the app decides what it offers (the server decides what they receive). */
@@ -2257,12 +2257,13 @@
     const who = changedBy();
     if (who) { const p = el.querySelector('.panel'); if (p) p.insertAdjacentHTML('beforeend', `<p class="meta changed">${who}</p>`); }
     el.hidden = false;
+    if (S.ready) armBack(); // back closes this form
   }
 
   /* ---------- Routing ---------- */
   function go(view, child, fromBack) {
     if (view === 'settings' && S.view !== 'settings') S.secOpen.clear();
-    if (!fromBack && S.ready) remember(view, child || null);
+    if (!fromBack && S.ready) { remember(view, child || null); armBack(); }
     S.view = view; S.child = child || null;
     try { history.replaceState(null, '', '#' + (view === 'child' ? 'child-' + child : view)); } catch (e) { /* not allowed here */ }
     render(); window.scrollTo(0, 0);
@@ -2271,7 +2272,7 @@
      Back closes an open form first, then goes to the previous screen, then to Today. On
      Today it asks for a second press before leaving the app, so one press too many doesn't
      close it. The browser history holds one extra step that catches each back press. */
-  const back = { stack: [], armed: false, lastAt: 0 };
+  const back = { stack: [], armed: false, t: 0 };
   function remember(view, child) {
     if (S.view === view && S.child === child) return;
     if (view === 'today') { back.stack = []; return; }
@@ -2293,11 +2294,15 @@
     const prev = back.stack.pop();
     if (prev) { go(prev.view, prev.child, true); armBack(); return; }
     if (S.view !== 'today') { go('today', null, true); armBack(); return; }
-    if (Date.now() - back.lastAt < 2500) { history.back(); return; } // second press: leave the app
-    back.lastAt = Date.now();
+    /* First press on Today: a warning, and nothing catches the next press for a moment, so a
+       second press is handled by the phone itself, exactly as for any other app. */
     toast('Press back again to close Herding Cats.');
-    armBack();
+    clearTimeout(back.t);
+    back.t = setTimeout(armBack, 2500);
   });
+  /* Coming back to the app (from recent apps or the icon) catches back presses again. */
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.ready) armBack(); });
+  window.addEventListener('pageshow', () => { if (S.ready) armBack(); });
 
   function fromHash() {
     let h = ''; try { h = (location.hash || '').slice(1); } catch (e) { /* ignore */ }
