@@ -6,6 +6,8 @@ import { chromium } from 'playwright';
 const URL = 'http://127.0.0.1:5000/';
 let failed = 0;
 const ok = (c, n) => { if (!c) failed++; console.log(`${c ? 'PASS' : 'FAIL'} siblings: ${n}`); };
+/* Settings sections start folded; tests open them all. */
+const openSettings = async p => { await p.click('[data-act=nav][data-v=settings] >> visible=true'); await p.waitForSelector('details.sec', { state: 'attached' }); await p.evaluate(() => document.querySelectorAll('details.sec').forEach(d => { d.open = true; })); await p.waitForTimeout(100); };
 const browser = await chromium.launch();
 async function newPage() {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 900 }, serviceWorkers: 'block' });
@@ -53,7 +55,7 @@ try {
   const code = await pg.evaluate(() => FH.account.session.familyCode);
   const addLogin = async (name, sibs) => {
     if (await pg.locator('[data-act=digest-close]').count()) await pg.click('[data-act=digest-close]');
-    await pg.click('[data-act=nav][data-v=settings] >> visible=true'); await pg.waitForSelector('[data-act=login-add]');
+    await openSettings(pg); await pg.waitForSelector('[data-act=login-add]');
     await pg.click('[data-act=login-add]'); await pg.waitForSelector('[data-form=login]');
     await pg.selectOption('#f-person', { label: name }); await pg.waitForTimeout(200);
     await pg.fill('#f-pass', 'kitty1234'); if (sibs) await pg.check('#f-sibs');

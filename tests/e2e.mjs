@@ -6,6 +6,8 @@ import { chromium } from 'playwright';
 const URL = 'http://127.0.0.1:5000/';
 let failed = 0;
 const ok = (cond, name) => { if (!cond) failed++; console.log(`${cond ? 'PASS' : 'FAIL'} app: ${name}`); };
+/* Settings sections start folded; tests open them all. */
+const openSettings = async p => { await p.click('[data-act=nav][data-v=settings] >> visible=true'); await p.waitForSelector('details.sec', { state: 'attached' }); await p.evaluate(() => document.querySelectorAll('details.sec').forEach(d => { d.open = true; })); await p.waitForTimeout(100); };
 const errors = [];
 
 const browser = await chromium.launch();
@@ -49,7 +51,7 @@ try {
   ok(await pg.locator('.kid').count() === 1, 'reload: still signed in, child still there');
   if (await pg.locator('[data-act=digest-close]').count()) await pg.click('[data-act=digest-close]');
 
-  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await openSettings(pg);
   const acc = await pg.innerText('#account');
   ok(acc.includes('natius@example.com') && acc.toUpperCase().includes('FAMILY ADMINISTRATOR'), 'account card shows email and role');
 
@@ -61,7 +63,7 @@ try {
 
   // ---------- Two devices: invite, join, sync both ways, offline ----------
   if (await pg.locator('[data-act=digest-close]').count()) await pg.click('[data-act=digest-close]');
-  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await openSettings(pg);
   await pg.waitForSelector('#people .set', { timeout: 15000 });
   await pg.click('[data-act=inv-new]'); await pg.waitForSelector('#inv-link', { timeout: 15000 });
   const link = await pg.inputValue('#inv-link');
@@ -74,7 +76,7 @@ try {
   ok((await pw.innerText('.hero')).includes('Join The Rautenbachs'), 'invite opens the Join screen');
   await submit(pw, 'join'); await pw.waitForSelector('[data-gate=pending-check]', { timeout: 20000 });
   ok((await pw.innerText('.hero')).includes('Waiting for approval'), 'joiner waits for approval');
-  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await openSettings(pg);
   await pg.waitForSelector('[data-act=mem-approve]', { timeout: 20000 });
   await pg.click('[data-act=mem-approve]'); await pg.waitForSelector('[data-form=member]');
   await pg.click('[data-form=member] button[type=submit]');
@@ -102,7 +104,7 @@ try {
   await pw.waitForFunction(() => FH.sync.status().waiting === 0, null, { timeout: 20000 }).catch(() => {});
   ok(await pw.evaluate(() => FH.sync.status().waiting) === 0, 'outbox empties once sent');
 
-  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await openSettings(pg);
   await pg.waitForFunction(() => (document.querySelector('#people') || {}).innerText?.includes('Wife'), null, { timeout: 15000 }).catch(() => {});
   ok((await pg.innerText('#people')).includes('Wife'), 'family card lists both people');
   await pg.evaluate(() => { const r = FH.app.S.reminders.find(x => x.title === 'Swimming gala'); FH.app.S.sheet = { kind: 'reminder', id: r.id }; FH.app.render(); });
@@ -110,11 +112,11 @@ try {
   await pg.keyboard.press('Escape');
 
   // ---------- A child's username login sees only their own items ----------
-  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await openSettings(pg);
   await pg.click('[data-act=child-add] >> visible=true'); await pg.fill('#f-name', 'Liam'); await pg.click('.panel button[type=submit]'); await pg.waitForTimeout(400);
   const addTask = async (who, title) => { await pg.click('[data-act=nav][data-v=tasks] >> visible=true'); await pg.click('.fab'); await pg.selectOption('#f-child', { label: who }); await pg.fill('#f-title', title); await pg.fill('#f-date', '2026-11-25'); await pg.click('.panel button[type=submit]'); await pg.waitForTimeout(400); };
   await addTask('Ava', 'Ava maths'); await addTask('Liam', 'Liam spelling');
-  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await openSettings(pg);
   await pg.waitForSelector('[data-act=login-add]'); await pg.click('[data-act=login-add]'); await pg.waitForSelector('[data-form=login]');
   await pg.selectOption('#f-person', { label: 'Ava' }); await pg.waitForTimeout(150);
   await pg.fill('#f-pass', 'kitty1234'); await pg.uncheck('#f-money');
@@ -170,7 +172,7 @@ try {
   ok((await pg2.innerText('#gate-note')).includes('reset link'), 'password reset email requested');
   // ---------- The owner deletes the family ----------
   if (await pg.locator('.panel').count()) await pg.keyboard.press('Escape');
-  await pg.click('[data-act=nav][data-v=settings] >> visible=true');
+  await openSettings(pg);
   await pg.click('[data-act=del-fam]'); await pg.fill('#f-confirm', 'The Rautenbachs'); await pg.click('[data-form=delfam] button[type=submit]');
   await pg.waitForSelector('#g-email', { timeout: 60000 });
   ok(await pg.locator('.shell').count() === 0, 'owner deletes the family and is signed out');

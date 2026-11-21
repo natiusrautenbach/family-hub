@@ -8,7 +8,7 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '2.5.0';
+  const VERSION = '2.6.0';
   const MILESTONE = 7;
   const PHASE2 = '2.5'; // Phase 2 milestone in this build
   /* Who is using the app decides what it offers (the server decides what they receive). */
@@ -64,15 +64,6 @@
   const colName = k => (COLOURS.find(c => c[0] === k) || COLOURS[0])[1];
   const GRADES = ['Grade R', ...Array.from({ length: 12 }, (_, i) => `Grade ${i + 1}`), 'Pre-school', 'Finished school'];
 
-  const MILESTONES = [
-    [1, 'Foundation', 'Install, local storage, children, backup'],
-    [2, 'Calendar and activities', 'Week and month views, activities, reminders, school terms'],
-    [3, 'Tasks', 'Homework and projects with notes and steps'],
-    [4, 'Study planner', 'Exam timetable photo, revision plan'],
-    [5, 'Accounts and savings', 'Balances, savings goals, money owed'],
-    [6, 'Chores and reward goals', 'Done or not done log, approvals'],
-    [7, 'Today and hand-over', 'Daily digest, child pages, install guide'],
-  ];
   const COMING = {
   };
 
@@ -90,6 +81,7 @@
     activities: [], reminders: [], terms: [], daysoff: [], sc: null,
     people: [], adults: [],                 // everyone on the calendar: children, then parents
     hidden: new Set(),                      // people switched off on the calendar
+    secOpen: new Set(),                     // Settings sections open right now (all closed when you arrive)
     kinds: new Set(['act', 'rem', 'task', 'study']), // item types shown on the calendar
     tasks: [], taskFilter: 'open', openTask: null,
     periods: [], exams: [], sessions: [], study: { period: null, tab: 'exams', imp: null },
@@ -268,10 +260,9 @@
         ${FH.sync && FH.sync.available ? `<div class="set"><span class="min0">Sync: <span id="sync-line" data-state="${S.syncStatus ? S.syncStatus.state : ''}">${syncLine(S.syncStatus)}</span></span></div>` : ''}
         <p class="hint" style="margin-top:8px">${isAdmin() ? 'Everything you add is shared with your family and kept on this device too, so it works without internet.' : 'You see what your family administrator chose for you. It\'s kept on this device too, so it works without internet.'}</p>
         <div class="row" style="margin-top:10px"><button class="btn sm" data-act="acct-signout">Sign out</button></div>
-      </section>
-      ${membersCard()}
-      <section class="card"><div class="card-h"><h3>Privacy</h3></div>${FH.account.PRIVACY}</section>`;
+      </section>`;
   }
+  const privacyCard = () => S.session ? `<section class="card" id="privacy"><div class="card-h"><h3>Privacy</h3></div>${FH.account.PRIVACY}</section>` : '';
 
   /* ---------- Phase 2: family, sync and people ---------- */
   const SHEET_STORE = { child: 'children', activity: 'activities', reminder: 'reminders', task: 'tasks', taskview: 'tasks', period: 'periods', exam: 'exams', session: 'sessions', account: 'accounts', entry: 'entries', goal: 'goals', ledger: 'ledger', settle: 'ledger', chore: 'chores', reward: 'rewards', term: 'terms', dayoff: 'daysoff' };
@@ -527,10 +518,7 @@
     } catch (e) { toast(`No invite was made: ${FH.cloud.message(e)}`); }
   }
 
-  function roadmap() {
-    return `<section class="card"><div class="card-h"><h3>Phase 1 build</h3><span class="pill on">Complete</span></div>
-      <ol class="ms">${MILESTONES.map(([n, t, d]) => `<li class="${n <= MILESTONE ? 'done' : ''}"><span class="msn">${n}</span><span class="min0"><b>${t}</b><span class="muted"> · ${d}</span></span><span class="pill ${n <= MILESTONE ? 'on' : ''}">${n <= MILESTONE ? 'Done' : 'Coming'}</span></li>`).join('')}</ol></section>`;
-  }
+
 
   /* ---------- Events (activities and reminders) ---------- */
   const src = () => ({ activities: S.activities, reminders: S.reminders, tasks: S.tasks, exams: S.exams, sessions: S.sessions, sc: S.sc });
@@ -1589,7 +1577,9 @@
 
   function helpCard() {
     const q = (title, body) => `<details class="help"><summary>${title}</summary><div class="small">${body}</div></details>`;
+    const offer = FH.install && FH.install.offer();
     return `<section class="card" id="help"><div class="card-h"><h3>Help</h3></div>
+      ${offer ? '<div class="set"><span class="min0">Install Herding Cats on this device so it opens like an app and works without internet.</span><button class="btn sm pri" data-install="go">Install app</button></div>' : ''}
       ${q('Install on iPhone or iPad', '<ol><li>Open the app\'s address in <b>Safari</b> (not another browser).</li><li>Tap the Share button, then <b>Add to Home Screen</b>, then Add.</li><li>Open Herding Cats from the new icon. It then works without internet.</li></ol>')}
       ${q('Install on Android', '<ol><li>Open the app\'s address in <b>Chrome</b>.</li><li>Tap <b>Install app</b> when it\'s offered, or the ⋮ menu, then <b>Install app</b> or <b>Add to Home screen</b>.</li></ol>')}
       ${q('Install on a PC or Mac', '<ol><li>Open the app\'s address in Chrome or Edge.</li><li>Click the install icon at the right of the address bar, or the browser menu, then <b>Install Herding Cats</b>.</li></ol>')}
@@ -1691,28 +1681,64 @@
     </section>`;
   }
 
+  /* ---------- Settings: every section folds; each opens on its own and all start closed ---------- */
+  /* Turns a card into a folding section: the title and a short summary show while it's closed. */
+  function fold(id, html, sum) {
+    if (!html || !html.trim()) return '';
+    const t = document.createElement('template'); t.innerHTML = html.trim();
+    const card = t.content.querySelector('section.card');
+    if (!card) return html;
+    const head = card.querySelector(':scope > .card-h');
+    const d = document.createElement('details');
+    d.className = `${card.className} sec`; d.id = card.id || id; d.dataset.sec = id;
+    if (S.secOpen.has(id)) d.open = true;
+    const sm = document.createElement('summary'); sm.className = 'card-h';
+    const h3 = head ? head.querySelector('h3') : null;
+    sm.innerHTML = `<span class="sech min0">${h3 ? h3.outerHTML : ''}${sum ? `<span class="sum">${sum}</span>` : ''}</span><span class="chev" aria-hidden="true"></span>`;
+    const body = document.createElement('div'); body.className = 'secb';
+    if (head) {
+      const acts = [...head.querySelectorAll('button, a.btn')];
+      if (acts.length) { const r = document.createElement('div'); r.className = 'row secacts'; acts.forEach(a => r.appendChild(a)); body.appendChild(r); }
+      head.remove();
+    }
+    while (card.firstChild) body.appendChild(card.firstChild);
+    d.append(sm, body);
+    return d.outerHTML;
+  }
+  const listNames = ps => { const n = ps.map(p => p.name); return n.length <= 3 ? n.join(', ') : `${n.slice(0, 3).join(', ')} +${n.length - 3}`; };
+  const aboutLine = () => `<p class="meta aboutline">Herding Cats beta ${VERSION}${inFrame ? ' · test link' : ''}${FH.cloud && FH.cloud.kind === 'fake' ? ' · test accounts (not online)' : ''}<br>© 2026 Natius. All rights reserved.</p>`;
+
   function vSettings() {
-    if (!isAdmin()) return `<div class="view"><div class="stack">${signInCard()}${familyEndCard()}${helpCard()}
-      <section class="card"><div class="card-h"><h3>About</h3></div><p class="meta">Herding Cats beta ${VERSION} · Phase 2, milestone ${PHASE2}</p><p class="meta" style="margin-top:4px">© 2026 Natius. All rights reserved.</p></section></div></div>`;
+    const s = S.session;
+    const acctSum = s ? `${esc(s.name)} · ${esc(ROLE_LABEL[s.role] || s.role)}` : '';
+    const ms = (S.members || []).filter(m => m.role !== 'pending'), waiting = (S.members || []).filter(m => m.role === 'pending');
+    const famSum = s && S.members ? `${ms.length} of ${FH.cloud.MAX_MEMBERS} people${waiting.length && isAdmin() ? ` · <b class="warnt">${waiting.length} waiting</b>` : ''}` : '';
+    const endSum = s && s.role === 'owner' ? 'Removes everything' : '';
+    if (!isAdmin()) return `<div class="view"><div class="stack">
+      ${fold('account', signInCard(), acctSum)}
+      ${fold('people', membersCard(), famSum)}
+      ${fold('privacy', privacyCard(), 'How your data is used')}
+      ${fold('help', helpCard(), 'How to use Herding Cats')}
+      ${fold('end', familyEndCard(), endSum)}
+      ${aboutLine()}</div></div>`;
     const st = S.storage;
-    const installed = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
     return `<div class="view"><div class="stack">
+      ${fold('family', `
+      <section class="card"><div class="card-h"><h3>Family name</h3></div>
+        <form class="row" data-form="family" style="flex-wrap:nowrap"><input id="set-family" placeholder="Family name (optional)" value="${esc(S.family)}" aria-label="Family name" autocomplete="off"><button class="btn" type="submit">Save</button></form>
+      </section>`, esc(S.family || (s && s.familyName) || 'Not set'))}
+      ${fold('account', signInCard(), acctSum)}
+      ${fold('children', `
       <section class="card"><div class="card-h"><h3>Children</h3><button class="btn sm" data-act="child-add">Add child</button></div>
         ${S.children.map(c => `<div class="set"><span class="row" style="flex-wrap:nowrap">${avatar(c)}<span class="min0"><b>${esc(c.name)}</b> <span class="muted">· ${esc(c.grade || '')}</span></span></span><button class="btn sm" data-act="child-edit" data-v="${c.id}">Edit</button></div>`).join('') || '<p class="empty">No children yet.</p>'}
-      </section>
-
-      ${S.adults.length ? `<section class="card" id="parents-card"><div class="card-h"><h3>Parents</h3></div>
+      </section>`, S.children.length ? `${S.children.length} · ${esc(listNames(S.children))}` : 'None yet')}
+      ${fold('parents', S.adults.length ? `<section class="card" id="parents-card"><div class="card-h"><h3>Parents</h3></div>
         <p class="meta" style="margin-bottom:8px">Parents have their own colour on the calendar. A parent's own activities and reminders are only seen by parents.</p>
         ${S.adults.map(c => `<div class="set"><span class="row" style="flex-wrap:nowrap">${avatar(c)}<span class="min0"><b>${esc(c.name)}</b>${c.uid === S.session?.uid ? ' <span class="muted">· you</span>' : ''}</span></span><button class="btn sm" data-act="child-edit" data-v="${c.id}">Edit</button></div>`).join('')}
-      </section>` : ''}
-
-      ${termsCard()}
-
-      <section class="card"><div class="card-h"><h3>Family</h3></div>
-        <form class="row" data-form="family" style="flex-wrap:nowrap"><input id="set-family" placeholder="Family name (optional)" value="${esc(S.family)}" aria-label="Family name" autocomplete="off"><button class="btn" type="submit">Save</button></form>
-      </section>
-
+      </section>` : '', esc(listNames(S.adults)))}
+      ${fold('people', membersCard(), famSum)}
+      ${fold('terms', termsCard(), S.sc.coverEnd ? `Loaded up to ${C.fmtDate(S.sc.coverEnd)}` : '')}
+      ${fold('backup', `
       <section class="card" id="backup"><div class="card-h"><h3>Backup and other devices</h3></div>
         <p class="small">${S.session ? 'A backup holds all your family\'s data in one file: an extra copy, kept outside Herding Cats. Your other devices get everything through sync.' : 'A backup holds everything on this device in one file. Use it to keep a copy safe, or to move your data to your phone or PC: export here, then restore on the other device.'}</p>
         <div class="row" style="margin-top:12px">
@@ -1724,31 +1750,17 @@
         ${inFrame ? '<p class="hint" style="margin-top:8px">In this test link, files can\'t be downloaded. Copy the backup as text and keep it in a note; the installed app adds a Download button.</p>' : ''}
         ${S.backupText ? `<label class="fld" style="margin-top:12px">Backup text<textarea id="backup-text" rows="4" readonly>${esc(S.backupText)}</textarea></label><p class="hint">If copying didn't work, select the text above and copy it yourself.</p>` : ''}
         <p class="meta" style="margin-top:8px">${S.lastBackup ? `Last backup on this device: ${fmtStamp(S.lastBackup)}` : 'No backup made on this device yet.'}${S.restoredAt ? ` · Restored from a backup: ${fmtStamp(S.restoredAt)}` : ''}</p>
-      </section>
-
+      </section>`, S.lastBackup ? `Last backup ${fmtStamp(S.lastBackup)}` : 'No backup on this device yet')}
+      ${fold('storage', `
       <section class="card"><div class="card-h"><h3>Storage on this device</h3>${st.persisted === true ? '<span class="pill on">Kept</span>' : st.persisted === false ? '<span class="pill warn">May be cleared</span>' : ''}</div>
         <p class="small">${st.persisted === true ? 'This browser has agreed to keep the app\'s data, even when space runs low.' : st.persisted === false ? 'This browser may clear the data if the device runs low on space. Ask it to keep the data. Installing the app to your home screen also helps, especially on iPhone.' : 'This browser doesn\'t say whether it keeps the data. Install the app and make regular backups.'}</p>
         ${st.persisted === false ? '<div class="row" style="margin-top:10px"><button class="btn sm pri" data-act="persist">Keep data on this device</button></div>' : ''}
         ${st.usage != null ? `<p class="meta" style="margin-top:8px">Using ${fmtBytes(st.usage)} on this device.</p>` : ''}
-      </section>
-
-      <section class="card"><div class="card-h"><h3>Install the app</h3>${installed ? '<span class="pill on">Installed</span>' : ''}</div>
-        ${installed ? '<p class="small">Herding Cats is installed and works without internet.</p>'
-          : inFrame ? '<p class="small">This test link can\'t be installed. Open Herding Cats on its own web address to install it.</p>'
-          : `<p class="small">Add Herding Cats to this device so it opens like an app and works without internet.</p><div class="row" style="margin-top:10px"><button class="btn sm pri" data-install="go">Install app</button></div>${ios ? '<p class="hint">On iPhone: Share › Add to Home Screen. The button shows you how.</p>' : ''}`}
-      </section>
-
-      ${signInCard()}
-      ${familyEndCard()}
-
-      ${helpCard()}
-
-      ${roadmap()}
-
-      <section class="card"><div class="card-h"><h3>About</h3></div>
-        <p class="meta">Herding Cats beta ${VERSION} · Phase 2, milestone ${PHASE2}${inFrame ? ' · test link' : ''}${FH.cloud && FH.cloud.kind === 'fake' ? ' · test accounts (not online)' : ''}</p>
-        <p class="meta" style="margin-top:4px">© 2026 Natius. All rights reserved.</p>
-      </section>
+      </section>`, `${st.persisted === true ? 'Kept' : st.persisted === false ? 'May be cleared' : 'Checking'}${st.usage != null ? ` · ${fmtBytes(st.usage)}` : ''}`)}
+      ${fold('privacy', privacyCard(), 'How your data is used')}
+      ${fold('help', helpCard(), 'How to use Herding Cats')}
+      ${fold('end', familyEndCard(), endSum)}
+      ${aboutLine()}
     </div></div>`;
   }
 
@@ -2003,6 +2015,7 @@
 
   /* ---------- Routing ---------- */
   function go(view, child) {
+    if (view === 'settings' && S.view !== 'settings') S.secOpen.clear();
     S.view = view; S.child = child || null;
     try { history.replaceState(null, '', '#' + (view === 'child' ? 'child-' + child : view)); } catch (e) { /* not allowed here */ }
     render(); window.scrollTo(0, 0);
@@ -2258,7 +2271,7 @@
     try {
       switch (a) {
         case 'retry': location.reload(); return;
-        case 'nav': go(v); if (v === 'settings') loadPeople(); if (b.dataset.scroll) setTimeout(() => document.getElementById(b.dataset.scroll)?.scrollIntoView({ behavior: 'smooth' }), 50); return;
+        case 'nav': go(v); if (v === 'settings') loadPeople(); if (b.dataset.scroll) { S.secOpen.add(b.dataset.scroll); render(); } if (b.dataset.scroll) setTimeout(() => document.getElementById(b.dataset.scroll)?.scrollIntoView({ behavior: 'smooth' }), 50); return;
         case 'open-child': go('child', v); return;
         case 'child-add': S.sheet = { kind: 'child' }; renderSheet(); setTimeout(() => $('#f-name')?.focus(), 30); return;
         case 'child-edit': S.sheet = { kind: 'child', id: v }; renderSheet(); return;
@@ -2587,6 +2600,11 @@
     if (t.classList.contains('su-name')) { const av = t.closest('.crow')?.querySelector('.avatar'); if (av) av.textContent = (t.value.trim()[0] || '?'); }
   });
 
+  /* Remembers which Settings sections are open, so a redraw doesn't fold them again. */
+  document.addEventListener('toggle', ev => {
+    const d = ev.target;
+    if (d && d.dataset && d.dataset.sec) d.open ? S.secOpen.add(d.dataset.sec) : S.secOpen.delete(d.dataset.sec);
+  }, true);
   document.addEventListener('change', ev => {
     if (ev.target.id === 'f-scope') { const one = ev.target.value !== 'all'; for (const i of document.querySelectorAll('.f-who, #f-who-all')) i.disabled = one; return; }
     if (ev.target.id === 'f-person' && S.sheet && S.sheet.kind === 'login') { readPeopleForm(); S.sheet.username = undefined; renderSheet(); return; }

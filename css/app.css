@@ -516,3 +516,15 @@ form.stack .btn.pri{justify-self:start}
 .ip-on{stroke:var(--accent);stroke-width:2.4}
 .instwrap:empty{display:none}.instwrap{margin-bottom:14px}
 a.btn{text-decoration:none;display:inline-flex;align-items:center}
+/* Settings sections that fold (2.6) */
+details.sec>summary{list-style:none;cursor:pointer;margin:0;align-items:center;gap:10px;-webkit-tap-highlight-color:transparent}
+details.sec>summary::-webkit-details-marker{display:none}
+details.sec>summary .sech{display:flex;flex-direction:column;gap:2px;flex:1}
+details.sec>summary .sum{font-size:13px;color:var(--muted);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+details.sec>summary .warnt{color:var(--warn,#b45309)}
+details.sec>summary .chev{flex:none;width:9px;height:9px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);margin:0 4px 4px 0;transition:transform .15s}
+details.sec[open]>summary .chev{transform:rotate(-135deg);margin:4px 4px 0 0}
+details.sec[open]>summary{margin-bottom:12px}
+details.sec>summary:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:8px}
+.secacts{margin-bottom:10px}
+.aboutline{text-align:center;margin:6px 0 4px;line-height:1.6}
