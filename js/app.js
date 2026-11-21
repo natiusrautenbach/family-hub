@@ -8,7 +8,7 @@
   const FH = window.FH;
   const data = FH.data;
   const C = FH.cal;
-  const VERSION = '3.0.1';
+  const VERSION = '3.0.2';
   const MILESTONE = 7;
   const PHASE2 = '2.5'; // Phase 2 milestone in this build
   /* Who is using the app decides what it offers (the server decides what they receive). */
@@ -2260,12 +2260,45 @@
   }
 
   /* ---------- Routing ---------- */
-  function go(view, child) {
+  function go(view, child, fromBack) {
     if (view === 'settings' && S.view !== 'settings') S.secOpen.clear();
+    if (!fromBack && S.ready) remember(view, child || null);
     S.view = view; S.child = child || null;
     try { history.replaceState(null, '', '#' + (view === 'child' ? 'child-' + child : view)); } catch (e) { /* not allowed here */ }
     render(); window.scrollTo(0, 0);
   }
+  /* ---------- The back button (Android) and swipe back (iPhone) ----------
+     Back closes an open form first, then goes to the previous screen, then to Today. On
+     Today it asks for a second press before leaving the app, so one press too many doesn't
+     close it. The browser history holds one extra step that catches each back press. */
+  const back = { stack: [], armed: false, lastAt: 0 };
+  function remember(view, child) {
+    if (S.view === view && S.child === child) return;
+    if (view === 'today') { back.stack = []; return; }
+    const i = back.stack.findIndex(e => e.view === view && e.child === child);
+    if (i >= 0) back.stack.length = i; // going back to a screen already in the trail: no loops
+    else back.stack.push({ view: S.view, child: S.child });
+    if (back.stack.length > 15) back.stack.shift();
+  }
+  function armBack() {
+    if (back.armed) return;
+    try { history.pushState({ hc: 'back' }, '', location.href); back.armed = true; } catch (e) { /* not allowed here */ }
+  }
+  window.addEventListener('popstate', () => {
+    if (!back.armed || !S.ready) return;
+    back.armed = false;
+    const inst = document.getElementById('instsheet');
+    if (inst) { inst.remove(); armBack(); return; }
+    if (S.sheet) { S.sheet = null; renderSheet(); armBack(); return; }
+    const prev = back.stack.pop();
+    if (prev) { go(prev.view, prev.child, true); armBack(); return; }
+    if (S.view !== 'today') { go('today', null, true); armBack(); return; }
+    if (Date.now() - back.lastAt < 2500) { history.back(); return; } // second press: leave the app
+    back.lastAt = Date.now();
+    toast('Press back again to close Herding Cats.');
+    armBack();
+  });
+
   function fromHash() {
     let h = ''; try { h = (location.hash || '').slice(1); } catch (e) { /* ignore */ }
     if (h.startsWith('child-')) { S.view = 'child'; S.child = h.slice(6); }
@@ -2955,6 +2988,7 @@
       S.error = e && e.message ? e.message : String(e);
     }
     render();
+    if (S.ready) armBack();
     maybeDigest();
   })();
   /* When the app comes back to the front on a new day, refresh and show that day's digest. */
